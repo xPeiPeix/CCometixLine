@@ -1,5 +1,5 @@
 use super::{Segment, SegmentData};
-use crate::config::{InputData, ModelConfig, SegmentId, TranscriptEntry};
+use crate::config::{InputData, Message, ModelConfig, SegmentId, TranscriptEntry};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -102,20 +102,14 @@ fn parse_transcript_usage<P: AsRef<Path>>(transcript_path: P) -> Option<u32> {
 }
 
 fn try_parse_transcript_file(path: &Path) -> Option<u32> {
-    let file = fs::File::open(path).ok()?;
-    let reader = BufReader::new(file);
-    let lines: Vec<String> = reader
-        .lines()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap_or_default();
+    let lines = read_lines(path)?;
 
     if lines.is_empty() {
         return None;
     }
 
     // Check if the last line is a summary
-    let last_line = lines.last()?.trim();
-    if let Ok(entry) = serde_json::from_str::<TranscriptEntry>(last_line) {
+    if let Some(entry) = parse_entry(lines.last()?) {
         if entry.r#type.as_deref() == Some("summary") {
             // Handle summary case: find usage by leafUuid
             if let Some(leaf_uuid) = &entry.leaf_uuid {
@@ -125,19 +119,14 @@ fn try_parse_transcript_file(path: &Path) -> Option<u32> {
         }
     }
 
-    // Normal case: find the last assistant message in current file
+    // Normal case: find the last assistant message with complete usage
+    // (stop_reason present indicates the response is fully received)
     for line in lines.iter().rev() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        if let Ok(entry) = serde_json::from_str::<TranscriptEntry>(line) {
+        if let Some(entry) = parse_entry(line) {
             if entry.r#type.as_deref() == Some("assistant") {
                 if let Some(message) = &entry.message {
-                    if let Some(raw_usage) = &message.usage {
-                        let normalized = raw_usage.clone().normalize();
-                        return Some(normalized.display_tokens());
+                    if let Some(tokens) = extract_usage(message) {
+                        return Some(tokens);
                     }
                 }
             }
@@ -149,18 +138,12 @@ fn try_parse_transcript_file(path: &Path) -> Option<u32> {
 
 fn find_usage_by_leaf_uuid(leaf_uuid: &str, project_dir: &Path) -> Option<u32> {
     // Search for the leafUuid across all session files in the project directory
-    let entries = fs::read_dir(project_dir).ok()?;
-
-    for entry in entries {
-        let entry = entry.ok()?;
-        let path = entry.path();
-
-        if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
-            continue;
-        }
-
-        if let Some(usage) = search_uuid_in_file(&path, leaf_uuid) {
-            return Some(usage);
+    for entry in fs::read_dir(project_dir).ok()? {
+        let path = entry.ok()?.path();
+        if path.extension().and_then(|s| s.to_str()) == Some("jsonl") {
+            if let Some(usage) = search_uuid_in_file(&path, leaf_uuid) {
+                return Some(usage);
+            }
         }
     }
 
@@ -168,40 +151,27 @@ fn find_usage_by_leaf_uuid(leaf_uuid: &str, project_dir: &Path) -> Option<u32> {
 }
 
 fn search_uuid_in_file(path: &Path, target_uuid: &str) -> Option<u32> {
-    let file = fs::File::open(path).ok()?;
-    let reader = BufReader::new(file);
-    let lines: Vec<String> = reader
-        .lines()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap_or_default();
+    let lines = read_lines(path)?;
 
     // Find the message with target_uuid
     for line in &lines {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        if let Ok(entry) = serde_json::from_str::<TranscriptEntry>(line) {
-            if let Some(uuid) = &entry.uuid {
-                if uuid == target_uuid {
-                    // Found the target message, check its type
-                    if entry.r#type.as_deref() == Some("assistant") {
-                        // Direct assistant message with usage
-                        if let Some(message) = &entry.message {
-                            if let Some(raw_usage) = &message.usage {
-                                let normalized = raw_usage.clone().normalize();
-                                return Some(normalized.display_tokens());
-                            }
-                        }
-                    } else if entry.r#type.as_deref() == Some("user") {
-                        // User message, need to find the parent assistant message
-                        if let Some(parent_uuid) = &entry.parent_uuid {
-                            return find_assistant_message_by_uuid(&lines, parent_uuid);
+        if let Some(entry) = parse_entry(line) {
+            if entry.uuid.as_deref() == Some(target_uuid) {
+                // Found the target message, check its type
+                if entry.r#type.as_deref() == Some("assistant") {
+                    // Direct assistant message with usage
+                    if let Some(message) = &entry.message {
+                        if let Some(tokens) = extract_usage(message) {
+                            return Some(tokens);
                         }
                     }
-                    break;
+                } else if entry.r#type.as_deref() == Some("user") {
+                    // User message, need to find the parent assistant message
+                    if let Some(parent_uuid) = &entry.parent_uuid {
+                        return find_assistant_message_by_uuid(&lines, parent_uuid);
+                    }
                 }
+                break;
             }
         }
     }
@@ -211,19 +181,13 @@ fn search_uuid_in_file(path: &Path, target_uuid: &str) -> Option<u32> {
 
 fn find_assistant_message_by_uuid(lines: &[String], target_uuid: &str) -> Option<u32> {
     for line in lines {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        if let Ok(entry) = serde_json::from_str::<TranscriptEntry>(line) {
-            if let Some(uuid) = &entry.uuid {
-                if uuid == target_uuid && entry.r#type.as_deref() == Some("assistant") {
-                    if let Some(message) = &entry.message {
-                        if let Some(raw_usage) = &message.usage {
-                            let normalized = raw_usage.clone().normalize();
-                            return Some(normalized.display_tokens());
-                        }
+        if let Some(entry) = parse_entry(line) {
+            if entry.uuid.as_deref() == Some(target_uuid)
+                && entry.r#type.as_deref() == Some("assistant")
+            {
+                if let Some(message) = &entry.message {
+                    if let Some(tokens) = extract_usage(message) {
+                        return Some(tokens);
                     }
                 }
             }
@@ -268,5 +232,31 @@ fn try_find_usage_from_project_history(transcript_path: &Path) -> Option<u32> {
         }
     }
 
+    None
+}
+
+// Helper functions
+
+fn read_lines(path: &Path) -> Option<Vec<String>> {
+    let file = fs::File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    Some(reader.lines().filter_map(|l| l.ok()).collect())
+}
+
+fn parse_entry(line: &str) -> Option<TranscriptEntry> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    serde_json::from_str(line).ok()
+}
+
+fn extract_usage(message: &Message) -> Option<u32> {
+    // Only messages with stop_reason have complete usage data
+    if message.stop_reason.is_some() {
+        if let Some(usage) = &message.usage {
+            return Some(usage.clone().normalize().display_tokens());
+        }
+    }
     None
 }

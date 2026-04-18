@@ -240,6 +240,31 @@ All segments are configurable with:
 
 Supported segments: Directory, Git, Model, Usage, Time, Cost, OutputStyle
 
+### Usage Segment Options
+
+The `usage` segment displays Claude API quota usage. Starting with Claude Code 2.1.80, rate limits are read directly from stdin (zero network). For older versions, the segment falls back to the `/api/oauth/usage` API endpoint.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `api_base_url` | string | `"https://api.anthropic.com"` | Base URL for the Anthropic API (fallback path only) |
+| `cache_duration` | integer | `300` | How long to cache API results (seconds) |
+| `timeout` | integer | `2` | API request timeout (seconds) |
+| `reset_period` | string | `"weekly"` | Which reset time to display: `"session"` (5-hour window) or `"weekly"` (7-day window) |
+| `reset_format` | string | `"time"` | Format of the reset time: `"time"` (e.g. `Apr 13 11:00 CEST`) or `"duration"` (e.g. `4h 52m`) |
+
+Example configuration:
+
+```toml
+[[segments]]
+id = "usage"
+enabled = true
+
+[segments.options]
+reset_period = "session"
+reset_format = "duration"
+cache_duration = 180
+```
+
 ### Model Configuration (`models.toml`)
 
 Location: `~/.claude/ccline/models.toml` (auto-created on first run)

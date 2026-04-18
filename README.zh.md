@@ -232,6 +232,31 @@ CCometixLine 支持通过 TOML 文件和交互式 TUI 进行完整配置：
 
 支持的段落：目录、Git、模型、使用量、时间、成本、输出样式
 
+### 使用量段落选项
+
+`usage` 段落显示 Claude API 配额使用情况。从 Claude Code 2.1.80 开始，速率限制从 stdin 直接读取（零网络）；旧版本则回退到 `/api/oauth/usage` API 接口。
+
+| 选项 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `api_base_url` | 字符串 | `"https://api.anthropic.com"` | Anthropic API 的基础 URL（仅回退路径使用） |
+| `cache_duration` | 整数 | `300` | API 结果缓存时长（秒） |
+| `timeout` | 整数 | `2` | API 请求超时时间（秒） |
+| `reset_period` | 字符串 | `"weekly"` | 显示哪个重置时间：`"session"`（5小时窗口）或 `"weekly"`（7天窗口） |
+| `reset_format` | 字符串 | `"time"` | 重置时间的格式：`"time"`（如 `Apr 13 11:00 CEST`）或 `"duration"`（如 `4h 52m`） |
+
+配置示例：
+
+```toml
+[[segments]]
+id = "usage"
+enabled = true
+
+[segments.options]
+reset_period = "session"
+reset_format = "duration"
+cache_duration = 180
+```
+
 ### 模型配置 (`models.toml`)
 
 文件位置：`~/.claude/ccline/models.toml`（首次运行时自动创建）

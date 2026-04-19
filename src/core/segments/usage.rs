@@ -1,7 +1,7 @@
 use super::{Segment, SegmentData};
 use crate::config::{InputData, SegmentId};
 use crate::utils::credentials;
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -49,48 +49,6 @@ impl UsageSegment {
         }
     }
 
-    fn format_reset_time(reset_time_str: Option<&str>) -> String {
-        if let Some(time_str) = reset_time_str {
-            if let Ok(dt) = DateTime::parse_from_rfc3339(time_str) {
-                let local_dt = dt.with_timezone(&Local);
-                return local_dt.format("%b %e %H:%M %Z").to_string();
-            }
-        }
-        "?".to_string()
-    }
-
-    /// Format reset time from RFC3339 string as remaining duration (e.g. "1d 2h", "4h 52m").
-    /// Used when reset_format = "duration" on the API fallback path.
-    fn format_reset_duration(reset_time_str: Option<&str>) -> String {
-        if let Some(time_str) = reset_time_str {
-            if let Ok(dt) = DateTime::parse_from_rfc3339(time_str) {
-                let now = Utc::now();
-                let reset_utc = dt.with_timezone(&Utc);
-                let remaining = reset_utc.signed_duration_since(now);
-
-                if remaining.num_seconds() <= 0 {
-                    return "now".to_string();
-                }
-
-                let total_minutes = remaining.num_minutes();
-                let days = total_minutes / (24 * 60);
-                let hours = (total_minutes % (24 * 60)) / 60;
-                let minutes = total_minutes % 60;
-
-                return if days > 0 {
-                    format!("{}d {}h", days, hours)
-                } else if hours > 0 {
-                    format!("{}h {}m", hours, minutes)
-                } else {
-                    format!("{}m", minutes)
-                };
-            }
-        }
-        "?".to_string()
-    }
-
-    /// Format reset time from epoch seconds as remaining duration (e.g. "4h", "15m").
-    /// Used by the stdin rate_limits path (Claude Code >= 2.1.80).
     fn format_reset_time_epoch(epoch: Option<u64>) -> String {
         if let Some(ts) = epoch {
             if ts == 0 {
@@ -242,12 +200,37 @@ impl Segment for UsageSegment {
                 .as_ref()
                 .and_then(|w| w.used_percentage)
                 .unwrap_or(0.0);
-            let resets_at_epoch = rate_limits.five_hour.as_ref().and_then(|w| w.resets_at);
+
+            let reset_period = crate::config::Config::load()
+                .ok()
+                .as_ref()
+                .and_then(|c| c.segments.iter().find(|s| s.id == SegmentId::Usage))
+                .and_then(|sc| sc.options.get("reset_period"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("weekly")
+                .to_string();
+
+            let (resets_at_epoch, window_label) = if reset_period == "session" {
+                (
+                    rate_limits.five_hour.as_ref().and_then(|w| w.resets_at),
+                    "5h",
+                )
+            } else {
+                (
+                    rate_limits.seven_day.as_ref().and_then(|w| w.resets_at),
+                    "7d",
+                )
+            };
 
             let dynamic_icon = Self::get_circle_icon(seven_day_util / 100.0);
             let five_hour_percent = five_hour_util.round() as u8;
-            let primary = format!("{}% (5h)", five_hour_percent);
-            let secondary = format!("· {} (5h)", Self::format_reset_time_epoch(resets_at_epoch));
+            let seven_day_percent = seven_day_util.round() as u8;
+            let primary = format!("{}% (5h) · {}% (7d)", five_hour_percent, seven_day_percent);
+            let secondary = format!(
+                "· {} ({})",
+                Self::format_reset_time_epoch(resets_at_epoch),
+                window_label
+            );
 
             let mut metadata = HashMap::new();
             metadata.insert("dynamic_icon".to_string(), dynamic_icon);
@@ -343,28 +326,26 @@ impl Segment for UsageSegment {
             .unwrap_or("weekly")
             .to_string();
 
-        let reset_format = segment_config
-            .and_then(|sc| sc.options.get("reset_format"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("time")
-            .to_string();
-
         let (resets_at, window_label) = if reset_period == "session" {
             (five_hour_resets_at.as_deref(), "5h")
         } else {
             (seven_day_resets_at.as_deref(), "7d")
         };
 
-        let reset_str = if reset_format == "duration" {
-            Self::format_reset_duration(resets_at)
-        } else {
-            Self::format_reset_time(resets_at)
-        };
+        let resets_at_epoch: Option<u64> = resets_at
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.with_timezone(&Utc).timestamp())
+            .and_then(|ts| u64::try_from(ts).ok());
 
         let dynamic_icon = Self::get_circle_icon(seven_day_util / 100.0);
         let five_hour_percent = five_hour_util.round() as u8;
-        let primary = format!("{}% (5h)", five_hour_percent);
-        let secondary = format!("· {} ({})", reset_str, window_label);
+        let seven_day_percent = seven_day_util.round() as u8;
+        let primary = format!("{}% (5h) · {}% (7d)", five_hour_percent, seven_day_percent);
+        let secondary = format!(
+            "· {} ({})",
+            Self::format_reset_time_epoch(resets_at_epoch),
+            window_label
+        );
 
         let mut metadata = HashMap::new();
         metadata.insert("dynamic_icon".to_string(), dynamic_icon);

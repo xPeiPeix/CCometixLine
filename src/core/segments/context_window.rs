@@ -83,6 +83,11 @@ impl Segment for ContextWindowSegment {
     }
 }
 
+// 职责说明（独立于 InputData.transcript_stats 共享 parse）：
+// 本函数只取"最后一条带 stop_reason 的 assistant message 的 usage"作为当前 context 占用，
+// 并在 transcript 文件不存在时跨同目录下其他 .jsonl 查找历史 session——属于反向查找 +
+// 跨 session history 合并的职责。TranscriptStats 做的是累加式统计（全量求和），
+// 二者语义不同，因此**不纳入**共享 parse cache。
 fn parse_transcript_usage<P: AsRef<Path>>(transcript_path: P) -> Option<u32> {
     let path = transcript_path.as_ref();
 

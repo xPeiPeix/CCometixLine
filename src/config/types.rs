@@ -298,6 +298,106 @@ impl NormalizedUsage {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+    use std::path::PathBuf;
+
+    fn make_input(transcript_path: String) -> InputData {
+        InputData {
+            model: Model {
+                id: "claude-test".to_string(),
+                display_name: "Claude Test".to_string(),
+            },
+            workspace: Workspace {
+                current_dir: ".".to_string(),
+            },
+            transcript_path,
+            cost: None,
+            output_style: None,
+            rate_limits: None,
+            transcript_stats_cache: OnceCell::new(),
+        }
+    }
+
+    fn unique_tmp_path(prefix: &str) -> PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!(
+            "{}_{}_{}.jsonl",
+            prefix,
+            std::process::id(),
+            nanos
+        ))
+    }
+
+    fn write_sample_transcript(path: &std::path::Path) {
+        let mut f = fs::File::create(path).expect("create transcript");
+        writeln!(
+            f,
+            r#"{{"type":"user","message":{{"content":[]}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"assistant","message":{{"stop_reason":"end_turn","usage":{{"input_tokens":10,"output_tokens":5}}}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"user","message":{{"content":[]}}}}"#
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn transcript_stats_returns_same_reference_across_calls() {
+        let path = unique_tmp_path("ccline_stats_shared");
+        write_sample_transcript(&path);
+
+        let input = make_input(path.to_string_lossy().into_owned());
+
+        let first = input.transcript_stats().expect("first call returns Some");
+        let second = input.transcript_stats().expect("second call returns Some");
+
+        assert!(
+            std::ptr::eq(first, second),
+            "transcript_stats must return the same reference on repeat calls"
+        );
+
+        // Sanity check: stats content parsed from our sample
+        assert_eq!(first.turn_count, 2);
+        assert_eq!(first.input_tokens, 10);
+        assert_eq!(first.output_tokens, 5);
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn transcript_stats_returns_none_when_file_missing() {
+        let path = unique_tmp_path("ccline_stats_missing");
+        // Ensure it really does not exist
+        let _ = fs::remove_file(&path);
+        assert!(!path.exists(), "setup: transcript path must not exist");
+
+        let input = make_input(path.to_string_lossy().into_owned());
+
+        assert!(
+            input.transcript_stats().is_none(),
+            "first call must return None for missing file"
+        );
+        assert!(
+            input.transcript_stats().is_none(),
+            "second call must also return None (cached)"
+        );
+    }
+}
+
 impl Config {
     /// Check if current config matches the specified theme preset
     pub fn matches_theme(&self, theme_name: &str) -> bool {

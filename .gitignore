@@ -6,3 +6,6 @@ CLAUDE.md
 PRD.md
 .claude/
 tests/
+
+# Ralph Setup 本地任务文件，不进 git
+/.todos/

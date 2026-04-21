@@ -475,24 +475,25 @@ Phase 1 把**单次 ccline 进程内** 5 次 parse 合并为 1 次，但每次�
 
 #### P2-3 实现 TranscriptStats 增量 parse
 
-**状态**: `[ ] TODO`
+**状态**: `[x] DONE`
 
-**修复范围**: `src/core/transcript.rs:20-84`（`TranscriptStats::parse` 函数）
+**修复范围**: `src/core/transcript.rs` 重构
 
-**改动要点**:
-- 新增 `pub fn parse_incremental<P: AsRef<Path>>(transcript_path: P, from_offset: u64, init: TranscriptStats) -> (TranscriptStats, u64)`
-  - 参数 `init`：上次累积的 stats，本次在其基础上累加
-  - 参数 `from_offset`：从此 byte offset 开始读
-  - 返回：(新累积 stats, 新的 file_size_offset)
-  - 实现：`File::open` + `seek(SeekFrom::Start(from_offset))` + `BufReader::lines()` 读剩余行 + 原有累加逻辑
-- 保留原 `parse()` 作为全量入口（内部调用 `parse_incremental(path, 0, TranscriptStats::default())` 并丢弃 offset）
+**改动**:
+- 新增 `pub fn parse_incremental<P: AsRef<Path>>(path, from_offset, init) -> Option<(Self, u64)>`
+  - 签名相对 TODO 调整：返回 `Option<(..)>` 而非 `(..)`，统一与原 `parse` 的错误语义（文件不存在 / IO 失败返回 None，调用方决定是否降级）
+  - 用 `file.metadata().len()` 作为新 offset（ccline 单次 subprocess 场景下并发 append 的概率极低；真的追加了下次 mtime 变化也会自动降级全量）
+  - 快速返回：`from_offset == file_size` 时直接 `Some((init, file_size))`，避免无意义 IO
+  - 截断检测：`from_offset > file_size` 直接返回 None，强制调用方全量重 parse
+- 保留原 `parse()` 作为全量入口，内部调 `parse_incremental(path, 0, default())`
+- 抽取私有函数 `apply_line_to_stats(line, &mut stats)` 让全量和增量共享累加逻辑
 
-**验收标准**:
-- [ ] 原有 `TranscriptStats::parse` 签名和行为不变
-- [ ] `cargo build --release` 通过
-- [ ] `cargo test` 通过
+**验收结果**:
+- [x] 原 `TranscriptStats::parse` 签名 `-> Option<Self>` 不变，行为等价
+- [x] `cargo build --release` 通过
+- [x] `cargo test --lib` 通过（17/17）
 
-**Commit 模板**: `feat: TranscriptStats 支持从 offset 增量 parse`
+**Commit**: `feat: TranscriptStats 支持从 offset 增量 parse`
 
 ---
 

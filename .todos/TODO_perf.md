@@ -456,22 +456,20 @@ Phase 1 把**单次 ccline 进程内** 5 次 parse 合并为 1 次，但每次�
 
 #### P2-2 实现 cache 文件 load/save
 
-**状态**: `[ ] TODO`
+**状态**: `[x] DONE`
 
-**修复范围**: `src/core/transcript_cache.rs` 里添加 load/save 函数
+**修复范围**: `src/core/transcript_cache.rs` 新增 3 个 pub fn
 
-**改动要点**:
-- `fn cache_path(transcript_path: &Path) -> Option<PathBuf>`：用 `DefaultHasher` hash `transcript_path`，生成 `~/.claude/ccline/.transcript_cache_<hash>.json`
-- `fn load_cache(transcript_path: &Path) -> Option<TranscriptCache>`：读文件 + 解析，失败返回 None
-- `fn save_cache(cache: &TranscriptCache) -> std::io::Result<()>`：原子写（先写 `.tmp` 再 `fs::rename`）
-- 仿照 `src/core/segments/usage.rs:84-103` 的 `get_cache_path` / `load_cache` / `save_cache` 模式
+**改动**:
+- `pub fn cache_path(transcript_path: &Path) -> Option<PathBuf>`：`DefaultHasher` 对 path.to_string_lossy() 做 hash（16 位 hex），拼成 `~/.claude/ccline/.transcript_cache_<hash>.json`
+- `pub fn load_cache(transcript_path: &Path) -> Option<TranscriptCache>`：文件不存在 / JSON 非法 / 任意 IO 错误全部返回 None
+- `pub fn save_cache(cache: &TranscriptCache) -> io::Result<()>`：先写 `.json.tmp` 再 `fs::rename`，父目录自动 `create_dir_all`
 
-**验收标准**:
-- [ ] 能够写入 + 读取同一份 cache，内容完全一致
-- [ ] load 不存在的 cache 文件返回 None 不 panic
-- [ ] save 时 parent 目录不存在会自动 `create_dir_all`
+**验收结果**:
+- [x] `cargo build --release` 通过（依赖 `dirs`、`serde_json`、`std::hash::DefaultHasher`，全部已有）
+- [x] load 不存在返回 None，save 原子写（P2-6 单元测试会覆盖往返一致性）
 
-**Commit 模板**: `feat: 实现 transcript cache 文件读写`
+**Commit**: `feat: 实现 transcript cache 文件读写`
 
 ---
 

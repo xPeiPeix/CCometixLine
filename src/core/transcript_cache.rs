@@ -140,3 +140,162 @@ pub fn parse_with_cache(transcript_path: &Path) -> Option<TranscriptStats> {
 
     Some(stats)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_tmp_path(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!(
+            "{}_{}_{}.jsonl",
+            prefix,
+            std::process::id(),
+            nanos
+        ))
+    }
+
+    fn write_lines(path: &Path, lines: &[&str]) {
+        let mut f = fs::File::create(path).expect("create transcript");
+        for l in lines {
+            writeln!(f, "{}", l).unwrap();
+        }
+    }
+
+    fn append_lines(path: &Path, lines: &[&str]) {
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(path)
+            .expect("append transcript");
+        for l in lines {
+            writeln!(f, "{}", l).unwrap();
+        }
+    }
+
+    const USER_LINE: &str = r#"{"type":"user","message":{"content":[]}}"#;
+    const ASSISTANT_LINE_A: &str = r#"{"type":"assistant","message":{"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5}}}"#;
+    const ASSISTANT_LINE_B: &str = r#"{"type":"assistant","message":{"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}}"#;
+
+    #[test]
+    fn full_parse_equals_two_step_incremental_parse() {
+        // 目标：全量读 5 行 == 先读 3 行得 offset，再从 offset 增量读 2 行
+        let path = unique_tmp_path("ccline_cache_incr_eq");
+
+        // 第一批 3 行
+        write_lines(&path, &[USER_LINE, ASSISTANT_LINE_A, USER_LINE]);
+
+        let (step1_stats, offset1) = TranscriptStats::parse_incremental(
+            &path,
+            0,
+            TranscriptStats::default(),
+        )
+        .expect("step1 parse ok");
+
+        // 第二批 2 行 append
+        append_lines(&path, &[ASSISTANT_LINE_B, USER_LINE]);
+
+        let (incremental_final, _) =
+            TranscriptStats::parse_incremental(&path, offset1, step1_stats.clone())
+                .expect("step2 parse ok");
+
+        // 对比：从 0 开始一次性全量 parse
+        let full = TranscriptStats::parse(&path).expect("full parse ok");
+
+        assert_eq!(
+            incremental_final.input_tokens, full.input_tokens,
+            "input_tokens mismatch"
+        );
+        assert_eq!(
+            incremental_final.output_tokens, full.output_tokens,
+            "output_tokens mismatch"
+        );
+        assert_eq!(
+            incremental_final.turn_count, full.turn_count,
+            "turn_count mismatch"
+        );
+        // Sanity: 3 user lines → turn_count = 3; 2 assistants stop_reason → last reason set
+        assert_eq!(full.turn_count, 3);
+        assert_eq!(full.input_tokens, 13);
+        assert_eq!(full.output_tokens, 7);
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn parse_incremental_returns_none_when_file_truncated() {
+        // 写 5 行 → 拿到 offset_full；然后截断到 2 行（size 变小）→ parse_incremental(from=offset_full) 必须返回 None
+        let path = unique_tmp_path("ccline_cache_truncate");
+        write_lines(
+            &path,
+            &[
+                USER_LINE,
+                ASSISTANT_LINE_A,
+                USER_LINE,
+                ASSISTANT_LINE_B,
+                USER_LINE,
+            ],
+        );
+
+        let (_stats5, offset5) =
+            TranscriptStats::parse_incremental(&path, 0, TranscriptStats::default())
+                .expect("initial parse ok");
+
+        // 截断覆盖：只留 2 行
+        write_lines(&path, &[USER_LINE, ASSISTANT_LINE_B]);
+
+        let truncated = TranscriptStats::parse_incremental(
+            &path,
+            offset5,
+            TranscriptStats::default(),
+        );
+
+        assert!(
+            truncated.is_none(),
+            "parse_incremental must return None when from_offset > new file_size (truncated)"
+        );
+
+        // 从 0 重新 parse 仍然成功（降级路径）
+        let recovered = TranscriptStats::parse(&path).expect("full re-parse after truncate");
+        assert_eq!(recovered.turn_count, 1); // 1 user line 剩下
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_cache_returns_none_for_corrupt_json() {
+        // 手写一个非法 JSON 到 cache_path；load_cache 必须返回 None 不 panic
+        // 为避免污染真实 home dir，用假的 transcript_path + save_cache 写入，然后 corrupt 覆盖
+        let transcript_path = unique_tmp_path("ccline_cache_corrupt");
+        write_lines(&transcript_path, &[USER_LINE, ASSISTANT_LINE_A]);
+
+        // 构造一份合法 cache 先保存（确认 save/load 基本往返 OK）
+        let stats = TranscriptStats::parse(&transcript_path).expect("parse ok");
+        let legit = TranscriptCache {
+            transcript_path: transcript_path.to_string_lossy().into_owned(),
+            file_size_at_parse: fs::metadata(&transcript_path).unwrap().len(),
+            file_mtime: String::new(),
+            stats,
+            cached_at: "2026-04-21T00:00:00Z".to_string(),
+        };
+        save_cache(&legit).expect("save ok");
+
+        // 现在把该 cache 文件覆盖成非法 JSON
+        let cpath = cache_path(&transcript_path).expect("cache_path ok");
+        fs::write(&cpath, b"{not-valid-json").expect("write corrupt ok");
+
+        let loaded = load_cache(&transcript_path);
+        assert!(
+            loaded.is_none(),
+            "load_cache must return None for corrupt JSON without panicking"
+        );
+
+        // 清理 cache 文件和 transcript
+        let _ = fs::remove_file(&cpath);
+        let _ = fs::remove_file(&transcript_path);
+    }
+}

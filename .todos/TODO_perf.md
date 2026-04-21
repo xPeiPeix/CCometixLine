@@ -547,21 +547,22 @@ Phase 1 把**单次 ccline 进程内** 5 次 parse 合并为 1 次，但每次�
 
 #### P2-6 新增单元测试（全量 vs 增量一致性 + 降级）
 
-**状态**: `[ ] TODO`
+**状态**: `[x] DONE`
 
-**修复范围**: `src/core/transcript_cache.rs` 末尾 `#[cfg(test)] mod tests { ... }`
+**修复范围**: `src/core/transcript_cache.rs` 末尾 `#[cfg(test)] mod tests`
 
-**改动要点**:
-- 测试用例 1：全量 parse 结果 == 分两次增量 parse 结果（写 3 行 → parse → 追加 2 行 → 增量 parse，比对 stats 各字段）
-- 测试用例 2：文件被截断（写 5 行 cache，再缩短文件到 3 行）→ 降级全量 parse
-- 测试用例 3：cache 文件损坏（写入非法 JSON）→ 降级全量 parse 不 panic
-- 用 `std::env::temp_dir()` + 唯一 filename 避免依赖 `tempfile` crate
+**改动**:
+- 测试 1 `full_parse_equals_two_step_incremental_parse`：3 行 parse → append 2 行 → 增量 parse，比对 `input_tokens / output_tokens / turn_count` 与一次性全量完全一致
+- 测试 2 `parse_incremental_returns_none_when_file_truncated`：写 5 行 → 拿 offset → 覆盖截断到 2 行 → `parse_incremental(path, offset5, init)` 必须返回 None；验证 fallback `TranscriptStats::parse` 仍然能工作
+- 测试 3 `load_cache_returns_none_for_corrupt_json`：先用 `save_cache` 写合法 cache → `fs::write` 覆盖成 `{not-valid-json` → `load_cache` 返回 None 不 panic；测试用独立 tmp transcript_path，clean up 时删除 cache 文件
+- 唯一文件名 = `std::env::temp_dir()` + 进程 pid + 纳秒时间戳，无新 crate 依赖
 
-**验收标准**:
-- [ ] 3 个测试用例都通过
-- [ ] 不引入新 crate 依赖
+**验收结果**:
+- [x] 3 个新测试全部通过（`cargo test --lib` 共 20/20）
+- [x] 不引入新 crate 依赖（Cargo.toml 未改）
+- [x] 清理逻辑正确：测试结束后 tmp transcript + 对应 cache 文件均删除
 
-**Commit 模板**: `test: 增量 parse 全量一致性 + 降级路径`
+**Commit**: `test: 增量 parse 全量一致性 + 降级路径`
 
 ---
 

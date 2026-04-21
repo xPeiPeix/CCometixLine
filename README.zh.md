@@ -236,13 +236,13 @@ CCometixLine 支持通过 TOML 文件和交互式 TUI 进行完整配置：
 
 `usage` 段落显示 Claude API 配额使用情况。从 Claude Code 2.1.80 开始，速率限制从 stdin 直接读取（零网络）；旧版本则回退到 `/api/oauth/usage` API 接口。
 
+输出格式：`<5h百分比>% (<5h剩余>) · <7d百分比>% (<7d剩余>)`，例如 `25% (3h) · 28% (4d)`。两个窗口始终同时显示，括号中为该窗口距离下次重置的剩余时间。
+
 | 选项 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `api_base_url` | 字符串 | `"https://api.anthropic.com"` | Anthropic API 的基础 URL（仅回退路径使用） |
 | `cache_duration` | 整数 | `300` | API 结果缓存时长（秒） |
 | `timeout` | 整数 | `2` | API 请求超时时间（秒） |
-| `reset_period` | 字符串 | `"weekly"` | 显示哪个重置时间：`"session"`（5小时窗口）或 `"weekly"`（7天窗口） |
-| `reset_format` | 字符串 | `"time"` | 重置时间的格式：`"time"`（如 `Apr 13 11:00 CEST`）或 `"duration"`（如 `4h 52m`） |
 
 配置示例：
 
@@ -252,8 +252,6 @@ id = "usage"
 enabled = true
 
 [segments.options]
-reset_period = "session"
-reset_format = "duration"
 cache_duration = 180
 ```
 

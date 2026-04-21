@@ -244,13 +244,13 @@ Supported segments: Directory, Git, Model, Usage, Time, Cost, OutputStyle
 
 The `usage` segment displays Claude API quota usage. Starting with Claude Code 2.1.80, rate limits are read directly from stdin (zero network). For older versions, the segment falls back to the `/api/oauth/usage` API endpoint.
 
+Output format: `<5h%>% (<5h remaining>) · <7d%>% (<7d remaining>)`, e.g. `25% (3h) · 28% (4d)`. Both windows are always shown; the parenthesized value is the remaining time until that window resets.
+
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `api_base_url` | string | `"https://api.anthropic.com"` | Base URL for the Anthropic API (fallback path only) |
 | `cache_duration` | integer | `300` | How long to cache API results (seconds) |
 | `timeout` | integer | `2` | API request timeout (seconds) |
-| `reset_period` | string | `"weekly"` | Which reset time to display: `"session"` (5-hour window) or `"weekly"` (7-day window) |
-| `reset_format` | string | `"time"` | Format of the reset time: `"time"` (e.g. `Apr 13 11:00 CEST`) or `"duration"` (e.g. `4h 52m`) |
 
 Example configuration:
 
@@ -260,8 +260,6 @@ id = "usage"
 enabled = true
 
 [segments.options]
-reset_period = "session"
-reset_format = "duration"
 cache_duration = 180
 ```
 

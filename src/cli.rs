@@ -15,6 +15,12 @@ pub struct Cli {
     /// Patch Claude Code cli.js to disable context warnings
     #[arg(long = "patch")]
     pub patch: Option<String>,
+
+    /// Overwrite all built-in theme files under ~/.claude/ccline/themes/
+    /// with the latest defaults compiled into this binary. Use after upgrading
+    /// when you want new palettes to take effect.
+    #[arg(long = "reset-themes")]
+    pub reset_themes: bool,
 }
 
 impl Cli {

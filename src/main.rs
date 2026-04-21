@@ -12,6 +12,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    if cli.reset_themes {
+        use ccometixline::config::ConfigLoader;
+        let written = ConfigLoader::reset_builtin_themes()?;
+        println!(
+            "Regenerated {} built-in theme file(s) under ~/.claude/ccline/themes/:",
+            written.len()
+        );
+        for path in &written {
+            println!("  {}", path.display());
+        }
+        return Ok(());
+    }
+
     // Handle Claude Code patcher
     if let Some(claude_path) = cli.patch {
         use ccometixline::utils::ClaudeCodePatcher;

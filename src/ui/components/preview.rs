@@ -10,7 +10,6 @@ use ratatui::{
 use std::collections::HashMap;
 
 pub struct PreviewComponent {
-    preview_cache: String,
     preview_text: Text<'static>,
 }
 
@@ -23,7 +22,6 @@ impl Default for PreviewComponent {
 impl PreviewComponent {
     pub fn new() -> Self {
         Self {
-            preview_cache: String::new(),
             preview_text: Text::default(),
         }
     }
@@ -38,9 +36,6 @@ impl PreviewComponent {
 
         // Generate both string and TUI text versions
         let renderer = StatusLineGenerator::new(config.clone());
-
-        // Keep string version for compatibility (if needed elsewhere)
-        self.preview_cache = renderer.generate(segments_data.clone());
 
         // Generate TUI-optimized text with smart segment wrapping for preview display
         // Use actual available width minus borders
@@ -71,14 +66,16 @@ impl PreviewComponent {
     }
 
     pub fn render(&self, f: &mut Frame, area: Rect) {
+        // Clear the area first — when segments get toggled off and the line shortens,
+        // ratatui's Paragraph doesn't paint beyond content length, so prior frames'
+        // characters ("s", "k", etc.) remain in the trailing cells.
+        f.render_widget(ratatui::widgets::Clear, area);
+        // `generate_for_tui_preview` already wraps by visible cell width; letting
+        // ratatui re-wrap would re-split lines using its own width calculation and
+        // corrupt ANSI sequences / Nerd Font glyphs.
         let preview = Paragraph::new(self.preview_text.clone())
-            .block(Block::default().borders(Borders::ALL).title("Preview"))
-            .wrap(ratatui::widgets::Wrap { trim: false });
+            .block(Block::default().borders(Borders::ALL).title("Preview"));
         f.render_widget(preview, area);
-    }
-
-    pub fn get_preview_cache(&self) -> &str {
-        &self.preview_cache
     }
 
     /// Generate mock segments data for preview display
@@ -126,8 +123,8 @@ impl PreviewComponent {
                     },
                 },
                 SegmentId::ContextWindow => SegmentData {
-                    primary: "78.2%".to_string(),
-                    secondary: "· 156.4k".to_string(),
+                    primary: "78.2% · 156.4k tokens".to_string(),
+                    secondary: "".to_string(),
                     metadata: {
                         let mut map = HashMap::new();
                         map.insert("total_tokens".to_string(), "156400".to_string());
@@ -137,8 +134,8 @@ impl PreviewComponent {
                     },
                 },
                 SegmentId::Usage => SegmentData {
-                    primary: "24%".to_string(),
-                    secondary: "· 10-7-2".to_string(),
+                    primary: "24% (3h) · 54% (2d)".to_string(),
+                    secondary: "".to_string(),
                     metadata: HashMap::new(),
                 },
                 SegmentId::Cost => SegmentData {
@@ -152,12 +149,10 @@ impl PreviewComponent {
                 },
                 SegmentId::Session => SegmentData {
                     primary: "3m45s".to_string(),
-                    secondary: "\x1b[32m+156\x1b[0m \x1b[31m-23\x1b[0m".to_string(),
+                    secondary: "".to_string(),
                     metadata: {
                         let mut map = HashMap::new();
                         map.insert("duration_ms".to_string(), "225000".to_string());
-                        map.insert("lines_added".to_string(), "156".to_string());
-                        map.insert("lines_removed".to_string(), "23".to_string());
                         map
                     },
                 },
@@ -182,6 +177,55 @@ impl PreviewComponent {
                         map.insert("update_available".to_string(), "false".to_string());
                         map
                     },
+                },
+                SegmentId::ApiDuration => SegmentData {
+                    primary: "1m23s".to_string(),
+                    secondary: "".to_string(),
+                    metadata: {
+                        let mut map = HashMap::new();
+                        map.insert("api_duration_ms".to_string(), "83000".to_string());
+                        map
+                    },
+                },
+                SegmentId::Lines => SegmentData {
+                    primary: "+156 -23".to_string(),
+                    secondary: "".to_string(),
+                    metadata: {
+                        let mut map = HashMap::new();
+                        map.insert("lines_added".to_string(), "156".to_string());
+                        map.insert("lines_removed".to_string(), "23".to_string());
+                        map
+                    },
+                },
+                SegmentId::CacheHit => SegmentData {
+                    primary: "87%".to_string(),
+                    secondary: "".to_string(),
+                    metadata: HashMap::new(),
+                },
+                SegmentId::Turns => SegmentData {
+                    primary: "#42".to_string(),
+                    secondary: "".to_string(),
+                    metadata: HashMap::new(),
+                },
+                SegmentId::Tools => SegmentData {
+                    primary: "15".to_string(),
+                    secondary: "".to_string(),
+                    metadata: HashMap::new(),
+                },
+                SegmentId::StopReason => SegmentData {
+                    primary: "end_turn".to_string(),
+                    secondary: "".to_string(),
+                    metadata: {
+                        let mut map = HashMap::new();
+                        map.insert("dynamic_icon".to_string(), "\u{f05e0}".to_string());
+                        map.insert("stop_reason".to_string(), "end_turn".to_string());
+                        map
+                    },
+                },
+                SegmentId::ToolSuccess => SegmentData {
+                    primary: "95%".to_string(),
+                    secondary: "".to_string(),
+                    metadata: HashMap::new(),
                 },
             };
 

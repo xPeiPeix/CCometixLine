@@ -1,7 +1,8 @@
-use crate::config::{Config, SegmentId};
+use crate::config::Config;
+use crate::core::{segment_group::GROUP_ORDER, SegmentGroup};
 use ratatui::{
     layout::Rect,
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem},
     Frame,
@@ -40,37 +41,48 @@ impl SegmentListComponent {
         selected_segment: usize,
         selected_panel: &Panel,
     ) {
-        let items: Vec<ListItem> = config
-            .segments
-            .iter()
-            .enumerate()
-            .map(|(i, segment)| {
-                let is_selected = i == selected_segment && *selected_panel == Panel::SegmentList;
+        let mut items: Vec<ListItem> = Vec::new();
+        let mut selected_list_index: Option<usize> = None;
+
+        // Render segments bucketed by GROUP_ORDER without mutating the underlying
+        // Vec — the user's on-disk order in config.toml is preserved, but the TUI
+        // always shows tidy group sections.
+        for group in GROUP_ORDER.iter().copied() {
+            let mut group_has_items = false;
+            for (vec_idx, segment) in config.segments.iter().enumerate() {
+                if SegmentGroup::of(&segment.id) != group {
+                    continue;
+                }
+                if !group_has_items {
+                    items.push(ListItem::new(Line::from(vec![Span::styled(
+                        format!("── {} ──", group.label()),
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Modifier::BOLD),
+                    )])));
+                    group_has_items = true;
+                }
+
+                let is_selected =
+                    vec_idx == selected_segment && *selected_panel == Panel::SegmentList;
                 let enabled_marker = if segment.enabled { "●" } else { "○" };
-                let segment_name = match segment.id {
-                    SegmentId::Model => "Model",
-                    SegmentId::Directory => "Directory",
-                    SegmentId::Git => "Git",
-                    SegmentId::ContextWindow => "Context Window",
-                    SegmentId::Usage => "Usage",
-                    SegmentId::Cost => "Cost",
-                    SegmentId::Session => "Session",
-                    SegmentId::OutputStyle => "Output Style",
-                    SegmentId::Update => "Update",
-                };
+                let segment_name = segment.id.display_name();
 
                 if is_selected {
-                    // Selected item with colored cursor
-                    ListItem::new(Line::from(vec![
-                        Span::styled("▶ ", Style::default().fg(Color::Cyan)),
+                    selected_list_index = Some(items.len());
+                    items.push(ListItem::new(Line::from(vec![
+                        Span::styled("  ▶ ", Style::default().fg(Color::Cyan)),
                         Span::raw(format!("{} {}", enabled_marker, segment_name)),
-                    ]))
+                    ])));
                 } else {
-                    // Non-selected item
-                    ListItem::new(format!("  {} {}", enabled_marker, segment_name))
+                    items.push(ListItem::new(format!(
+                        "    {} {}",
+                        enabled_marker, segment_name
+                    )));
                 }
-            })
-            .collect();
+            }
+        }
+
         let segments_block = Block::default()
             .borders(Borders::ALL)
             .title("Segments")
@@ -80,6 +92,11 @@ impl SegmentListComponent {
                 Style::default()
             });
         let segments_list = List::new(items).block(segments_block);
-        f.render_widget(segments_list, area);
+        // Stateful render — ratatui auto-scrolls the visible window so the selected
+        // item stays in view (prevents Stop Reason being clipped off-screen when
+        // Preview steals a row).
+        let mut state = ratatui::widgets::ListState::default();
+        state.select(selected_list_index);
+        f.render_stateful_widget(segments_list, area, &mut state);
     }
 }

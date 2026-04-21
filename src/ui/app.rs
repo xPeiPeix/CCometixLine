@@ -1,4 +1,4 @@
-use crate::config::{Config, SegmentId, StyleMode};
+use crate::config::{Config, StyleMode};
 use crate::ui::components::{
     color_picker::{ColorPickerComponent, NavDirection},
     help::HelpComponent,
@@ -74,8 +74,9 @@ impl App {
         // Load config
         let mut config = Config::load().unwrap_or_else(|_| Config::default());
 
-        // If a theme is specified, reload it to get the latest changes
-        if !config.theme.is_empty() && config.theme != "default" {
+        // Only fall back to the theme file when config.toml has no segments,
+        // so hand-edited segments in config.toml take priority over theme files.
+        if config.segments.is_empty() && !config.theme.is_empty() && config.theme != "default" {
             if let Ok(theme_config) =
                 crate::ui::themes::ThemePresets::load_theme_from_file(&config.theme)
             {
@@ -458,6 +459,9 @@ impl App {
     fn move_selection(&mut self, delta: i32) {
         match self.selected_panel {
             Panel::SegmentList => {
+                if self.config.segments.is_empty() {
+                    return;
+                }
                 let new_selection = (self.selected_segment as i32 + delta)
                     .max(0)
                     .min((self.config.segments.len() - 1) as i32)
@@ -496,17 +500,7 @@ impl App {
                 // Toggle segment enabled/disabled in segment list
                 if let Some(segment) = self.config.segments.get_mut(self.selected_segment) {
                     segment.enabled = !segment.enabled;
-                    let segment_name = match segment.id {
-                        SegmentId::Model => "Model",
-                        SegmentId::Directory => "Directory",
-                        SegmentId::Git => "Git",
-                        SegmentId::ContextWindow => "Context Window",
-                        SegmentId::Usage => "Usage",
-                        SegmentId::Cost => "Cost",
-                        SegmentId::Session => "Session",
-                        SegmentId::OutputStyle => "Output Style",
-                        SegmentId::Update => "Update",
-                    };
+                    let segment_name = segment.id.display_name();
                     let is_enabled = segment.enabled;
                     self.status_message = Some(format!(
                         "{} segment {}",
@@ -523,17 +517,7 @@ impl App {
                         // Toggle enabled state in settings panel too
                         if let Some(segment) = self.config.segments.get_mut(self.selected_segment) {
                             segment.enabled = !segment.enabled;
-                            let segment_name = match segment.id {
-                                SegmentId::Model => "Model",
-                                SegmentId::Directory => "Directory",
-                                SegmentId::Git => "Git",
-                                SegmentId::ContextWindow => "Context Window",
-                                SegmentId::Usage => "Usage",
-                                SegmentId::Cost => "Cost",
-                                SegmentId::Session => "Session",
-                                SegmentId::OutputStyle => "Output Style",
-                                SegmentId::Update => "Update",
-                            };
+                            let segment_name = segment.id.display_name();
                             let is_enabled = segment.enabled;
                             self.status_message = Some(format!(
                                 "{} segment {}",
@@ -632,7 +616,10 @@ impl App {
         self.config = crate::ui::themes::ThemePresets::get_theme(theme_name);
         self.selected_segment = 0;
         self.preview.update_preview(&self.config);
-        self.status_message = Some(format!("Switched to {} theme", theme_name));
+        self.status_message = Some(format!(
+            "Switched to {} theme — unsaved edits discarded, press [S] to save",
+            theme_name
+        ));
     }
 
     /// Reset current theme to its default configuration
@@ -653,6 +640,14 @@ impl App {
     fn move_segment_up(&mut self) {
         if self.selected_panel == Panel::SegmentList && self.selected_segment > 0 {
             let current_idx = self.selected_segment;
+            let cur_group = crate::core::SegmentGroup::of(&self.config.segments[current_idx].id);
+            let prev_group =
+                crate::core::SegmentGroup::of(&self.config.segments[current_idx - 1].id);
+            if cur_group != prev_group {
+                self.status_message =
+                    Some("Cannot move across groups (inter-group order is fixed)".to_string());
+                return;
+            }
             self.config.segments.swap(current_idx, current_idx - 1);
             self.selected_segment -= 1;
             self.preview.update_preview(&self.config);
@@ -663,9 +658,17 @@ impl App {
     /// Move the currently selected segment down in the list
     fn move_segment_down(&mut self) {
         if self.selected_panel == Panel::SegmentList
-            && self.selected_segment < self.config.segments.len() - 1
+            && self.selected_segment + 1 < self.config.segments.len()
         {
             let current_idx = self.selected_segment;
+            let cur_group = crate::core::SegmentGroup::of(&self.config.segments[current_idx].id);
+            let next_group =
+                crate::core::SegmentGroup::of(&self.config.segments[current_idx + 1].id);
+            if cur_group != next_group {
+                self.status_message =
+                    Some("Cannot move across groups (inter-group order is fixed)".to_string());
+                return;
+            }
             self.config.segments.swap(current_idx, current_idx + 1);
             self.selected_segment += 1;
             self.preview.update_preview(&self.config);

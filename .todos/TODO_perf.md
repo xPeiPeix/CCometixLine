@@ -121,102 +121,49 @@ merge-community-prs  ← 主人 fork 的工作分支（Rin 从这里切出，而
 
 | 分组 | DONE / BLOCKED / WAITING / 总数 | 分支 | PR URL |
 |---|---|---|---|
-| Phase 1（方案 A：共享 parse） | 8 / 0 / 0 / 8 | perf/transcript-parse-phase1 | `[⚠️] BLOCKED` fork 不存在 |
-| Phase 2（方案 C：增量 parse） | 7 / 0 / 0 / 7 | perf/transcript-parse-phase2 | `[⚠️] BLOCKED` fork 不存在 |
+| Phase 1（方案 A：共享 parse） | 8 / 0 / 0 / 8 | perf/transcript-parse-phase1 | https://github.com/xPeiPeix/CCometixLine/pull/1 |
+| Phase 2（方案 C：增量 parse） | 7 / 0 / 0 / 7 | perf/transcript-parse-phase2 | https://github.com/xPeiPeix/CCometixLine/pull/2 |
 
 ---
 
-## 💤 用户归来待办（全流程结束后自动填充此区）
+## 💤 用户归来待办
 
-### 一、代码工作完整性
+### 一、代码 + PR 完整性
 
-- **Phase 1 完成率**：8 / 8（P1-1~P1-5 代码预先完成于 `abd8669` 重构；P1-6 加职责注释；P1-7 单元测试；P1-8 smoke test 全绿）
-- **Phase 2 完成率**：7 / 7（P2-1~P2-5 代码全部落地；P2-6 3 个单元测试覆盖全量/增量/截断/损坏；P2-7 实测数据齐全）
-- **总测试结果**：`cargo test --lib` 20 / 20 全绿（起始 15 → 新增 5 个）
-- **总 commit 数**：7 个 new commit
-  - Phase 1 分支: `582a4af docs` / `6fb12f2 test`
-  - Phase 2 分支: `b3bbccf feat` / `50ab157 feat` / `9c46533 feat` / `f9dc7b0 feat` / `896bfdc refactor` / `52348d6 test`
+- **Phase 1**：8 / 8 DONE → PR #1 已创建（`CLEAN / MERGEABLE`）
+- **Phase 2**：7 / 7 DONE → PR #2 已创建（`CLEAN / MERGEABLE`，stacked on #1）
+- **测试**：`cargo test --lib` 20 / 20 全绿（起始 15 → 新增 5 个）
+- **Commit 数**：8 个
+  - Phase 1 分支：`582a4af docs` / `6fb12f2 test`
+  - Phase 2 分支：`b3bbccf feat` / `50ab157 feat` / `9c46533 feat` / `f9dc7b0 feat` / `896bfdc refactor` / `52348d6 test` / `e1e77e1 docs` + 本 commit
 
-### 二、用户必做的 3 步（解开 PR 创建阻塞）
+### 二、PR URL
 
-**当前阻塞**：Rin 不能自主跑 `gh repo fork`（授权外 + blast radius 高），两个 PR 创建链路都卡在"origin 指向 upstream"这一点。
+- Phase 1: https://github.com/xPeiPeix/CCometixLine/pull/1
+- Phase 2: https://github.com/xPeiPeix/CCometixLine/pull/2
 
-```bash
-cd /d/dev_code/AI_related/CCometixLine
+### 三、合并命令（仅剩人工 merge 操作）
 
-# 1. 创建主人 fork 并重配 remote
-#    执行后：origin = xPeiPeix/CCometixLine, upstream = Haleclipse/CCometixLine
-gh repo fork Haleclipse/CCometixLine --remote=true
-git remote -v  # 验证
-
-# 2. Push + 创建 Phase 1 PR
-git push -u origin perf/transcript-parse-phase1
-gh pr create --repo xPeiPeix/CCometixLine \
-  --base merge-community-prs \
-  --head perf/transcript-parse-phase1 \
-  --title "perf: transcript parse 共享（方案 A）" \
-  --body "$(cat <<'EOF'
-## 背景
-把 InputData.transcript_stats() 共享 parse 基础设施从"已存在但未被 segment 使用"补齐为"5 段全部走 OnceCell 缓存 + 加共享 cache 的 doc 说明"。详见 .todos/TODO_perf.md。
-
-## 自治运行摘要
-- DONE: P1-1 ~ P1-5 验证（abd8669 已完成）/ P1-6 context_window 职责注释 / P1-7 新增单元测试 / P1-8 部署 smoke test
-
-## Test plan
-- [x] cargo test 通过（17/17）
-- [x] cargo build --release 通过
-- [x] smoke_test.sh 5/5 通过
-- [ ] 部署后长会话实测（需人工验证）
-EOF
-)"
-
-# 3. Push + 创建 Phase 2 PR（stacked）
-git push -u origin perf/transcript-parse-phase2
-gh pr create --repo xPeiPeix/CCometixLine \
-  --base perf/transcript-parse-phase1 \
-  --head perf/transcript-parse-phase2 \
-  --title "perf: transcript parse 增量 cache（方案 C，stacked on Phase 1）" \
-  --body "$(cat <<'EOF'
-## 背景
-Phase 2 增量 parse——跨 ccline 进程持久化 cache，长会话第二次启动走增量路径。stacked on Phase 1 PR。
-
-## 自治运行摘要
-- DONE: P2-1 ~ P2-7 全部完成
-- 关键设计偏离：`parse_with_cache` 只用 size 变化判"截断/重写"，不用 mtime（否则 append 永远降级全量，违反 Phase 2 目标）
-
-## 实测数据（1.5MB / 358 行 transcript）
-- 冷启动均值 ~680ms（稳态）
-- 热启动均值 ~562ms（增量走 cache，低 ~15%）
-- 截断降级自动生效 + cache 原子覆盖
-
-## Test plan
-- [x] cargo test 通过（20/20）
-- [x] cargo build --release 通过
-- [ ] 部署后长会话实测（需人工验证）
-EOF
-)"
-```
-
-### 三、合并建议（用户手动执行）
-
-**合并顺序**：先 Phase 1 再 Phase 2（stacked 依赖）
+**合并顺序**：先 #1 后 #2（stacked 依赖）
 
 ```bash
-# Phase 1 merge（base: merge-community-prs）
-gh pr merge <Phase1_PR_URL> --merge --repo xPeiPeix/CCometixLine
+# Phase 1 → merge-community-prs
+gh pr merge 1 --repo xPeiPeix/CCometixLine --merge
 
-# Phase 2 merge（base: perf/transcript-parse-phase1）
-# 注意：Phase 1 merge 后，Phase 2 的 base 会自动 retarget 到 merge-community-prs
-gh pr merge <Phase2_PR_URL> --merge --repo xPeiPeix/CCometixLine
+# Phase 2 → 原 base=perf/transcript-parse-phase1，Phase 1 merge 后 GitHub 会自动把 Phase 2 的 base retarget 到 merge-community-prs
+gh pr merge 2 --repo xPeiPeix/CCometixLine --merge
 ```
+
+*若主人想用 squash：把 `--merge` 改为 `--squash`。本仓库历史用的是 merge 而非 squash，建议保持一致。*
 
 ### 四、其他状态
 
 | 类别 | 明细 |
 |---|---|
-| BLOCKED 项 | Phase 1 / Phase 2 PR 创建（唯一原因：fork 不存在） |
+| BLOCKED 项 | 无 |
 | WAITING_REVIEW 项 | 无 |
-| CI_STUCK 项 | 无 |
+| CI_STUCK 项 | 无（fork 不启用 Actions workflow，无 CI 运行） |
+| Review 评论 | PR #1 / #2 均无评论——主人 fork 内部 PR 不走外部 review 流程 |
 
 ### 五、部署前后耗时对比（实测数据）
 
@@ -233,10 +180,10 @@ gh pr merge <Phase2_PR_URL> --merge --repo xPeiPeix/CCometixLine
 
 ### 六、总耗时 / 完成率
 
-- Ralph 执行 1 轮完成全部代码工作（P1 预先完成 5/8 + 新增 3/8；P2 全部 7/7）
+- Ralph 执行完成所有代码工作 + PR 创建
 - 代码完成率：**100%**（15/15 任务）
-- PR 流程完成率：**0 / 2**（全部 BLOCKED 于 fork）
-- 阻塞解除所需用户操作：约 3 条命令（fork + 2× push/create），预计 5 分钟
+- PR 流程完成率：**2 / 2**（全部 DONE，仅剩 merge 人工操作）
+- 阻塞：**已全部解除**（主人手动完成 fork + 配 remote）
 
 ---
 
@@ -494,28 +441,18 @@ Push 后自动回步骤 2 等新一轮 review。**循环上限 5 轮**，超出 
 
 ### Phase 1 完成触发
 
-**状态**: `[⚠️] BLOCKED: 主人 fork xPeiPeix/CCometixLine 不存在，无法 push/create PR`
+**状态**: `[x] DONE`
 
-**阻塞原因**:
-- 当前 worktree 的 `origin` 指向 upstream `Haleclipse/CCometixLine`（主仓库同）
-- `xPeiPeix/CCometixLine` fork 不存在（`gh repo view` 返回 404）
-- TODO "启动前预检查" 章节的 `gh repo fork Haleclipse/CCometixLine --remote=true` 未执行
-- 在此状态下 `git push origin perf/transcript-parse-phase1` 会推到 upstream，违反硬边界"❌ 永不推 upstream"
-- Ralph 授权表"❌ 改 master / merge-community-prs"和"禁止 merge / push upstream"同样指向**不得在未 fork 前推送**
+**PR**: https://github.com/xPeiPeix/CCometixLine/pull/1
 
-**所需动作**（用户归来手动执行）:
-```bash
-cd /d/dev_code/AI_related/CCometixLine
-gh repo fork Haleclipse/CCometixLine --remote=true
-git push -u origin perf/transcript-parse-phase1
-gh pr create --repo xPeiPeix/CCometixLine \
-  --base merge-community-prs \
-  --head perf/transcript-parse-phase1 \
-  --title "perf: transcript parse 共享（方案 A）" \
-  --body <按步骤 1 模板>
-```
-
-代理继续：跳过 Phase 1 PR review 循环，切 `perf/transcript-parse-phase2` 完成剩余代码工作。
+**流程**:
+- 主人手动完成 fork + 配 remote + push merge-community-prs 解除原 BLOCKED
+- `git push -u origin perf/transcript-parse-phase1` ✓
+- `gh pr create --base merge-community-prs --head perf/transcript-parse-phase1` ✓
+- `mergeStateStatus: CLEAN`, `mergeable: MERGEABLE`，无冲突
+- **无 CI 运行**（fork 默认不继承 upstream 的 Actions workflow）
+- **无 review 评论**（主人 fork 内部 PR，不走外部 review）
+- review 循环 0 轮退出
 
 ---
 
@@ -703,24 +640,16 @@ Phase 1 把**单次 ccline 进程内** 5 次 parse 合并为 1 次，但每次�
 
 ### Phase 2 完成触发
 
-**状态**: `[⚠️] BLOCKED: 同 Phase 1——主人 fork xPeiPeix/CCometixLine 不存在`
+**状态**: `[x] DONE`
 
-**阻塞原因**:
-- 与 Phase 1 相同：`origin` 指向 upstream `Haleclipse/CCometixLine`，直接 push 会违反硬边界
-- Phase 2 是 stacked PR，`--base perf/transcript-parse-phase1` 也需要 Phase 1 分支先 push 成功
+**PR**: https://github.com/xPeiPeix/CCometixLine/pull/2 （**stacked on #1**，merge 前置依赖）
 
-**所需动作**（用户归来手动执行，先 Phase 1 再 Phase 2）:
-```bash
-cd /d/dev_code/AI_related/CCometixLine
-# 先完成 Phase 1 PR 创建章节列出的命令
-# 然后：
-git push -u origin perf/transcript-parse-phase2
-gh pr create --repo xPeiPeix/CCometixLine \
-  --base perf/transcript-parse-phase1 \
-  --head perf/transcript-parse-phase2 \
-  --title "perf: transcript parse 增量 cache（方案 C，stacked on Phase 1）" \
-  --body <按步骤 1 模板>
-```
+**流程**:
+- `git push -u origin perf/transcript-parse-phase2` ✓
+- `gh pr create --base perf/transcript-parse-phase1 --head perf/transcript-parse-phase2` ✓
+- `mergeStateStatus: CLEAN`, `mergeable: MERGEABLE`，无冲突
+- 无 CI 运行 + 无 review 评论，同 Phase 1 理由
+- review 循环 0 轮退出
 
 ---
 

@@ -119,14 +119,29 @@ fn try_parse_transcript_file(path: &Path) -> Option<u32> {
         }
     }
 
-    // Normal case: find the last assistant message with complete usage
-    // (stop_reason present indicates the response is fully received)
+    // Normal case: prefer the last assistant message with complete usage
+    // (stop_reason present indicates the response is fully received).
     for line in lines.iter().rev() {
         if let Some(entry) = parse_entry(line) {
             if entry.r#type.as_deref() == Some("assistant") {
                 if let Some(message) = &entry.message {
                     if let Some(tokens) = extract_usage(message) {
                         return Some(tokens);
+                    }
+                }
+            }
+        }
+    }
+
+    // First-turn fallback: a brand-new session has no completed turn yet, so
+    // every message has `stop_reason = None`. Rather than leaving context_window
+    // blank, surface whatever usage the latest assistant message reports.
+    for line in lines.iter().rev() {
+        if let Some(entry) = parse_entry(line) {
+            if entry.r#type.as_deref() == Some("assistant") {
+                if let Some(message) = &entry.message {
+                    if let Some(usage) = &message.usage {
+                        return Some(usage.clone().normalize().display_tokens());
                     }
                 }
             }

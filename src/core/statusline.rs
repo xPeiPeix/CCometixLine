@@ -1,32 +1,56 @@
 use crate::config::{AnsiColor, Config, SegmentConfig, StyleMode};
 use crate::core::segments::SegmentData;
 
-/// Strip ANSI escape sequences and return visible text length
+/// Strip ANSI escape sequences and return terminal display width.
+///
+/// Uses `UnicodeWidthStr` so Nerd Font icons, emoji, and CJK characters count as 2 cells
+/// instead of 1 — otherwise the TUI preview wrapper under-estimates segment width and
+/// ratatui's own Wrap re-splits a "full" line mid-grapheme (produces artefacts like
+/// `to4ens` and truncates trailing segments off-screen).
+///
+/// Handles three escape-sequence classes so future hyperlink/title emission won't leak
+/// into the cell count:
+///   * CSI `\x1b[...FINAL_BYTE` (colors, cursor) — ends on 0x40..=0x7E
+///   * OSC `\x1b]...BEL` or `...ESC\\` (hyperlinks, window title)
+///   * Single-char ESC `\x1bX` for everything else (SS2/SS3/etc.)
 fn visible_width(text: &str) -> usize {
+    use unicode_width::UnicodeWidthStr;
     let mut visible = String::new();
-    let mut in_escape = false;
     let mut chars = text.chars().peekable();
 
     while let Some(ch) = chars.next() {
-        if ch == '\x1b' {
-            // Start of ANSI escape sequence
-            in_escape = true;
-            // Skip the [ character
-            if chars.peek() == Some(&'[') {
-                chars.next();
-            }
-        } else if in_escape {
-            // Skip until we find the end of the escape sequence (letter)
-            if ch.is_alphabetic() {
-                in_escape = false;
-            }
-        } else {
-            // Regular character
+        if ch != '\x1b' {
             visible.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('[') => {
+                // CSI — consume parameter/intermediate bytes until final byte.
+                for c in chars.by_ref() {
+                    if matches!(c, '\x40'..='\x7E') {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                // OSC — terminates on BEL (0x07) or ST (ESC \).
+                while let Some(c) = chars.next() {
+                    if c == '\x07' {
+                        break;
+                    }
+                    if c == '\x1b' {
+                        chars.next();
+                        break;
+                    }
+                }
+            }
+            Some(_) | None => {
+                // Single-character ESC sequence (or stray ESC at end of string).
+            }
         }
     }
 
-    visible.chars().count()
+    UnicodeWidthStr::width(visible.as_str())
 }
 
 pub struct StatusLineGenerator {
@@ -39,16 +63,18 @@ impl StatusLineGenerator {
     }
 
     pub fn generate(&self, segments: Vec<(SegmentConfig, SegmentData)>) -> String {
-        let mut output = Vec::new();
         let enabled_segments: Vec<_> = segments
             .into_iter()
             .filter(|(config, _)| config.enabled)
             .collect();
 
+        let mut output = Vec::new();
+        let mut rendered_configs: Vec<SegmentConfig> = Vec::new();
         for (config, data) in enabled_segments.iter() {
             let rendered = self.render_segment(config, data);
             if !rendered.is_empty() {
                 output.push(rendered);
+                rendered_configs.push(config.clone());
             }
         }
 
@@ -60,31 +86,9 @@ impl StatusLineGenerator {
         if self.config.style.separator == "\u{e0b0}" {
             self.join_with_powerline_arrows(&output, &enabled_segments)
         } else {
-            // For all other separators, use white color and simple join
-            self.join_with_white_separators(&output)
+            // For all other separators, use white color and per-segment override
+            self.join_with_white_separators(&output, &rendered_configs)
         }
-    }
-
-    /// Generate statusline for TUI preview with proper width calculation
-    /// This method handles ANSI escape sequences properly for ratatui rendering
-    pub fn generate_for_tui(
-        &self,
-        segments: Vec<(SegmentConfig, SegmentData)>,
-    ) -> ratatui::text::Line<'static> {
-        use ansi_to_tui::IntoText;
-        use ratatui::text::{Line, Span};
-
-        // Use the same generate method and convert to TUI
-        let full_output = self.generate(segments);
-
-        if let Ok(text) = full_output.into_text() {
-            if let Some(line) = text.lines.into_iter().next() {
-                return line;
-            }
-        }
-
-        // Fallback to raw text
-        Line::from(vec![Span::raw(full_output)])
     }
 
     /// Generate TUI-optimized text with intelligent wrapping by segment for preview
@@ -121,7 +125,8 @@ impl StatusLineGenerator {
             return Text::from(vec![Line::default()]);
         }
 
-        // Pre-calculate separators between segments
+        // Pre-calculate separators between segments (uses decide_separator for
+        // user-override / intra-group ` · ` / inter-group global — same as runtime)
         let mut separators = Vec::new();
         for i in 0..rendered_segments.len().saturating_sub(1) {
             let separator = if self.config.style.separator == "\u{e0b0}" {
@@ -134,8 +139,8 @@ impl StatusLineGenerator {
                     .and_then(|config| config.colors.background.as_ref());
                 self.create_powerline_arrow(prev_bg, curr_bg)
             } else {
-                // Regular separators with white color
-                format!("\x1b[37m{}\x1b[0m", self.config.style.separator)
+                let sep = self.decide_separator(&segment_configs[i + 1], &segment_configs[i]);
+                format!("\x1b[37m{}\x1b[0m", sep)
             };
             separators.push(separator);
         }
@@ -356,15 +361,57 @@ impl StatusLineGenerator {
         }
     }
 
-    /// Join segments with white separators (non-Powerline)
-    fn join_with_white_separators(&self, rendered_segments: &[String]) -> String {
+    /// Decide the separator string between two adjacent segments.
+    ///
+    /// Priority (first matching branch wins):
+    ///   1. `cur.options.separator_before` — explicit user override.
+    ///   2. Theme's `style.separator` is empty (pure-bubble themes like powerline
+    ///      variants and nord) → empty string; background-color transitions are
+    ///      the separator and injecting ` · ` would break the visual design.
+    ///   3. Same `SegmentGroup` as prev → ` · ` (intra-group).
+    ///   4. Different group → global `style.separator` (inter-group).
+    ///
+    /// Single source of truth — both runtime statusline and TUI preview use this.
+    fn decide_separator(&self, cur: &SegmentConfig, prev: &SegmentConfig) -> String {
+        use crate::core::SegmentGroup;
+        if let Some(v) = cur
+            .options
+            .get("separator_before")
+            .and_then(|v| v.as_str())
+        {
+            return v.to_string();
+        }
+        // Pure-bubble themes (e.g., powerline variants with empty separator) rely on
+        // background-color transitions; injecting ` · ` inside groups would break the
+        // visual design. Keep separators empty across the board for these themes.
+        if self.config.style.separator.is_empty() {
+            return String::new();
+        }
+        if SegmentGroup::of(&cur.id) == SegmentGroup::of(&prev.id) {
+            " · ".to_string()
+        } else {
+            self.config.style.separator.clone()
+        }
+    }
+
+    /// Join segments with white separators (non-Powerline).
+    fn join_with_white_separators(
+        &self,
+        rendered_segments: &[String],
+        configs: &[SegmentConfig],
+    ) -> String {
         if rendered_segments.is_empty() {
             return String::new();
         }
 
-        // Use white color for separator
-        let white_separator = format!("\x1b[37m{}\x1b[0m", self.config.style.separator);
-        rendered_segments.join(&white_separator)
+        let mut result = rendered_segments[0].clone();
+        for (i, rendered) in rendered_segments.iter().enumerate().skip(1) {
+            let sep = self.decide_separator(&configs[i], &configs[i - 1]);
+            let white_sep = format!("\x1b[37m{}\x1b[0m", sep);
+            result.push_str(&white_sep);
+            result.push_str(rendered);
+        }
+        result
     }
 
     /// Join segments with Powerline arrow separators with proper color transitions
@@ -509,6 +556,34 @@ pub fn collect_all_segments(
                 let segment = UpdateSegment::new();
                 segment.collect(input)
             }
+            crate::config::SegmentId::ApiDuration => {
+                let segment = ApiDurationSegment::new();
+                segment.collect(input)
+            }
+            crate::config::SegmentId::Lines => {
+                let segment = LinesSegment::new();
+                segment.collect(input)
+            }
+            crate::config::SegmentId::CacheHit => {
+                let segment = CacheHitSegment::new();
+                segment.collect(input)
+            }
+            crate::config::SegmentId::Turns => {
+                let segment = TurnsSegment::new();
+                segment.collect(input)
+            }
+            crate::config::SegmentId::Tools => {
+                let segment = ToolsSegment::new();
+                segment.collect(input)
+            }
+            crate::config::SegmentId::StopReason => {
+                let segment = StopReasonSegment::new();
+                segment.collect(input)
+            }
+            crate::config::SegmentId::ToolSuccess => {
+                let segment = ToolSuccessSegment::new();
+                segment.collect(input)
+            }
         };
 
         if let Some(data) = segment_data {
@@ -517,4 +592,183 @@ pub fn collect_all_segments(
     }
 
     results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{
+        ColorConfig, IconConfig, SegmentConfig, SegmentId, StyleConfig, StyleMode,
+        TextStyleConfig,
+    };
+    use std::collections::HashMap;
+
+    fn seg(id: SegmentId, sep_override: Option<&str>) -> SegmentConfig {
+        let mut options = HashMap::new();
+        if let Some(s) = sep_override {
+            options.insert(
+                "separator_before".to_string(),
+                serde_json::Value::String(s.to_string()),
+            );
+        }
+        SegmentConfig {
+            id,
+            enabled: true,
+            icon: IconConfig {
+                plain: String::new(),
+                nerd_font: String::new(),
+            },
+            colors: ColorConfig {
+                icon: None,
+                text: None,
+                background: None,
+            },
+            styles: TextStyleConfig::default(),
+            options,
+        }
+    }
+
+    fn gen_with_sep(sep: &str) -> StatusLineGenerator {
+        StatusLineGenerator::new(Config {
+            style: StyleConfig {
+                mode: StyleMode::NerdFont,
+                separator: sep.to_string(),
+            },
+            segments: Vec::new(),
+            theme: String::new(),
+        })
+    }
+
+    #[test]
+    fn decide_separator_intra_group_uses_middot() {
+        let g = gen_with_sep(" | ");
+        // Model + OutputStyle both live in Identity.
+        let cur = seg(SegmentId::OutputStyle, None);
+        let prev = seg(SegmentId::Model, None);
+        assert_eq!(g.decide_separator(&cur, &prev), " · ");
+    }
+
+    #[test]
+    fn decide_separator_inter_group_uses_theme_separator() {
+        let g = gen_with_sep(" | ");
+        // Cost (Quota) -> Session (Time) crosses groups.
+        let cur = seg(SegmentId::Session, None);
+        let prev = seg(SegmentId::Cost, None);
+        assert_eq!(g.decide_separator(&cur, &prev), " | ");
+    }
+
+    #[test]
+    fn decide_separator_user_override_wins() {
+        let g = gen_with_sep(" | ");
+        let cur = seg(SegmentId::Session, Some(" x "));
+        let prev = seg(SegmentId::Cost, None);
+        assert_eq!(g.decide_separator(&cur, &prev), " x ");
+    }
+
+    #[test]
+    fn decide_separator_bubble_theme_returns_empty_even_intra_group() {
+        let g = gen_with_sep("");
+        let cur = seg(SegmentId::OutputStyle, None);
+        let prev = seg(SegmentId::Model, None);
+        assert_eq!(g.decide_separator(&cur, &prev), "");
+    }
+
+    #[test]
+    fn decide_separator_bubble_theme_user_override_still_wins() {
+        // Even on a bubble theme, explicit separator_before should not be silenced.
+        let g = gen_with_sep("");
+        let cur = seg(SegmentId::Session, Some(" · "));
+        let prev = seg(SegmentId::Cost, None);
+        assert_eq!(g.decide_separator(&cur, &prev), " · ");
+    }
+
+    #[test]
+    fn visible_width_counts_plain_ascii() {
+        assert_eq!(visible_width("hello"), 5);
+    }
+
+    #[test]
+    fn visible_width_strips_csi_colors() {
+        assert_eq!(visible_width("\x1b[31mred\x1b[0m"), 3);
+        assert_eq!(visible_width("\x1b[38;5;214m214-color\x1b[0m"), 9);
+    }
+
+    #[test]
+    fn visible_width_strips_osc_hyperlink() {
+        // OSC 8 hyperlink: ESC ] 8 ; ; URL ESC \ TEXT ESC ] 8 ; ; ESC \
+        let hyperlinked = "\x1b]8;;https://example.com\x1b\\click\x1b]8;;\x1b\\";
+        assert_eq!(visible_width(hyperlinked), 5);
+    }
+
+    #[test]
+    fn visible_width_counts_nerd_font_icons_as_two_cells() {
+        use unicode_width::UnicodeWidthStr;
+        // Most Nerd Font PUA codepoints have width 2; assert on a known glyph.
+        let icon = "\u{f024b}"; // folder icon used by Directory segment
+        assert_eq!(visible_width(icon), UnicodeWidthStr::width(icon));
+    }
+
+    #[test]
+    fn visible_width_handles_cjk() {
+        // CJK ideographs are width 2 each.
+        assert_eq!(visible_width("中文"), 4);
+    }
+
+    #[test]
+    fn normalize_segment_order_groups_by_group_order() {
+        use crate::core::SegmentGroup;
+        let mut cfg = Config {
+            style: StyleConfig {
+                mode: StyleMode::NerdFont,
+                separator: " | ".to_string(),
+            },
+            // Intentionally scrambled: Activity -> Identity -> Time -> Place
+            segments: vec![
+                seg(SegmentId::Tools, None),
+                seg(SegmentId::Model, None),
+                seg(SegmentId::Session, None),
+                seg(SegmentId::Directory, None),
+            ],
+            theme: String::new(),
+        };
+        cfg.normalize_segment_order();
+        let groups: Vec<_> = cfg
+            .segments
+            .iter()
+            .map(|s| SegmentGroup::of(&s.id))
+            .collect();
+        assert_eq!(
+            groups,
+            vec![
+                SegmentGroup::Identity,
+                SegmentGroup::Place,
+                SegmentGroup::Time,
+                SegmentGroup::Activity,
+            ]
+        );
+    }
+
+    #[test]
+    fn normalize_segment_order_preserves_intra_group_order() {
+        let mut cfg = Config {
+            style: StyleConfig {
+                mode: StyleMode::NerdFont,
+                separator: " | ".to_string(),
+            },
+            // Both Time group; user explicitly put ApiDuration before Session.
+            // Stable sort must preserve that ordering.
+            segments: vec![
+                seg(SegmentId::ApiDuration, None),
+                seg(SegmentId::Session, None),
+                seg(SegmentId::Lines, None),
+            ],
+            theme: String::new(),
+        };
+        cfg.normalize_segment_order();
+        let ids: Vec<_> = cfg.segments.iter().map(|s| s.id).collect();
+        assert_eq!(
+            ids,
+            vec![SegmentId::ApiDuration, SegmentId::Session, SegmentId::Lines]
+        );
+    }
 }

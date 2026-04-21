@@ -1,4 +1,6 @@
+use crate::core::transcript::TranscriptStats;
 use serde::{Deserialize, Serialize};
+use std::cell::OnceCell;
 use std::collections::HashMap;
 
 // Main config structure
@@ -73,6 +75,36 @@ pub enum SegmentId {
     Session,
     OutputStyle,
     Update,
+    ApiDuration,
+    Lines,
+    CacheHit,
+    Turns,
+    Tools,
+    StopReason,
+    ToolSuccess,
+}
+
+impl SegmentId {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Model => "Model",
+            Self::Directory => "Directory",
+            Self::Git => "Git",
+            Self::ContextWindow => "Context Window",
+            Self::Usage => "Usage",
+            Self::Cost => "Cost",
+            Self::Session => "Session",
+            Self::OutputStyle => "Output Style",
+            Self::Update => "Update",
+            Self::ApiDuration => "API Duration",
+            Self::Lines => "Lines",
+            Self::CacheHit => "Cache Hit",
+            Self::Turns => "Turns",
+            Self::Tools => "Tools",
+            Self::StopReason => "Stop Reason",
+            Self::ToolSuccess => "Tool Success",
+        }
+    }
 }
 
 // Legacy compatibility structure
@@ -130,6 +162,20 @@ pub struct InputData {
     pub cost: Option<Cost>,
     pub output_style: Option<OutputStyle>,
     pub rate_limits: Option<RateLimits>,
+    /// Cached TranscriptStats shared across segments in one statusline tick.
+    /// Parsing the JSONL is O(N); without this cache, cache_hit / stop_reason /
+    /// tool_success / tools / turns would each re-parse the whole file.
+    #[serde(skip)]
+    transcript_stats_cache: OnceCell<Option<TranscriptStats>>,
+}
+
+impl InputData {
+    /// Lazy-parse the transcript once per tick and return a shared reference.
+    pub fn transcript_stats(&self) -> Option<&TranscriptStats> {
+        self.transcript_stats_cache
+            .get_or_init(|| TranscriptStats::parse(&self.transcript_path))
+            .as_ref()
+    }
 }
 
 // OpenAI-style nested token details
@@ -415,6 +461,8 @@ pub type Usage = RawUsage;
 pub struct Message {
     pub usage: Option<Usage>,
     pub stop_reason: Option<String>,
+    #[serde(default)]
+    pub content: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]

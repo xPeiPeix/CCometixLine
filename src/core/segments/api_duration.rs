@@ -3,9 +3,9 @@ use crate::config::{InputData, SegmentId};
 use std::collections::HashMap;
 
 #[derive(Default)]
-pub struct SessionSegment;
+pub struct ApiDurationSegment;
 
-impl SessionSegment {
+impl ApiDurationSegment {
     pub fn new() -> Self {
         Self
     }
@@ -36,41 +36,24 @@ impl SessionSegment {
     }
 }
 
-impl Segment for SessionSegment {
+impl Segment for ApiDurationSegment {
     fn collect(&self, input: &InputData) -> Option<SegmentData> {
         let cost_data = input.cost.as_ref()?;
+        let api_duration = cost_data.total_api_duration_ms?;
 
-        // Primary display: total duration
-        let primary = if let Some(duration) = cost_data.total_duration_ms {
-            Self::format_duration(duration)
-        } else {
-            return None;
-        };
-
-        let secondary = String::new();
+        let primary = Self::format_duration(api_duration);
 
         let mut metadata = HashMap::new();
-        if let Some(duration) = cost_data.total_duration_ms {
-            metadata.insert("duration_ms".to_string(), duration.to_string());
-        }
-        if let Some(api_duration) = cost_data.total_api_duration_ms {
-            metadata.insert("api_duration_ms".to_string(), api_duration.to_string());
-        }
-        if let Some(added) = cost_data.total_lines_added {
-            metadata.insert("lines_added".to_string(), added.to_string());
-        }
-        if let Some(removed) = cost_data.total_lines_removed {
-            metadata.insert("lines_removed".to_string(), removed.to_string());
-        }
+        metadata.insert("api_duration_ms".to_string(), api_duration.to_string());
 
         Some(SegmentData {
             primary,
-            secondary,
+            secondary: String::new(),
             metadata,
         })
     }
 
     fn id(&self) -> SegmentId {
-        SegmentId::Session
+        SegmentId::ApiDuration
     }
 }

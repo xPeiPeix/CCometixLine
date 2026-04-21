@@ -23,6 +23,7 @@ struct ApiUsageCache {
     seven_day_utilization: f64,
     #[serde(default)]
     five_hour_resets_at: Option<String>,
+    #[serde(default)]
     seven_day_resets_at: Option<String>,
     cached_at: String,
 }
@@ -201,36 +202,21 @@ impl Segment for UsageSegment {
                 .and_then(|w| w.used_percentage)
                 .unwrap_or(0.0);
 
-            let reset_period = crate::config::Config::load()
-                .ok()
-                .as_ref()
-                .and_then(|c| c.segments.iter().find(|s| s.id == SegmentId::Usage))
-                .and_then(|sc| sc.options.get("reset_period"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("weekly")
-                .to_string();
-
-            let (resets_at_epoch, window_label) = if reset_period == "session" {
-                (
-                    rate_limits.five_hour.as_ref().and_then(|w| w.resets_at),
-                    "5h",
-                )
-            } else {
-                (
-                    rate_limits.seven_day.as_ref().and_then(|w| w.resets_at),
-                    "7d",
-                )
-            };
+            let five_hour_remaining = Self::format_reset_time_epoch(
+                rate_limits.five_hour.as_ref().and_then(|w| w.resets_at),
+            );
+            let seven_day_remaining = Self::format_reset_time_epoch(
+                rate_limits.seven_day.as_ref().and_then(|w| w.resets_at),
+            );
 
             let dynamic_icon = Self::get_circle_icon(seven_day_util / 100.0);
             let five_hour_percent = five_hour_util.round() as u8;
             let seven_day_percent = seven_day_util.round() as u8;
-            let primary = format!("{}% (5h) · {}% (7d)", five_hour_percent, seven_day_percent);
-            let secondary = format!(
-                "· {} ({})",
-                Self::format_reset_time_epoch(resets_at_epoch),
-                window_label
+            let primary = format!(
+                "{}% ({}) · {}% ({})",
+                five_hour_percent, five_hour_remaining, seven_day_percent, seven_day_remaining
             );
+            let secondary = String::new();
 
             let mut metadata = HashMap::new();
             metadata.insert("dynamic_icon".to_string(), dynamic_icon);
@@ -320,32 +306,28 @@ impl Segment for UsageSegment {
                 }
             };
 
-        let reset_period = segment_config
-            .and_then(|sc| sc.options.get("reset_period"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("weekly")
-            .to_string();
-
-        let (resets_at, window_label) = if reset_period == "session" {
-            (five_hour_resets_at.as_deref(), "5h")
-        } else {
-            (seven_day_resets_at.as_deref(), "7d")
+        let rfc3339_to_epoch = |s: &str| -> Option<u64> {
+            DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|dt| dt.with_timezone(&Utc).timestamp())
+                .and_then(|ts| u64::try_from(ts).ok())
         };
 
-        let resets_at_epoch: Option<u64> = resets_at
-            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.with_timezone(&Utc).timestamp())
-            .and_then(|ts| u64::try_from(ts).ok());
+        let five_hour_remaining = Self::format_reset_time_epoch(
+            five_hour_resets_at.as_deref().and_then(rfc3339_to_epoch),
+        );
+        let seven_day_remaining = Self::format_reset_time_epoch(
+            seven_day_resets_at.as_deref().and_then(rfc3339_to_epoch),
+        );
 
         let dynamic_icon = Self::get_circle_icon(seven_day_util / 100.0);
         let five_hour_percent = five_hour_util.round() as u8;
         let seven_day_percent = seven_day_util.round() as u8;
-        let primary = format!("{}% (5h) · {}% (7d)", five_hour_percent, seven_day_percent);
-        let secondary = format!(
-            "· {} ({})",
-            Self::format_reset_time_epoch(resets_at_epoch),
-            window_label
+        let primary = format!(
+            "{}% ({}) · {}% ({})",
+            five_hour_percent, five_hour_remaining, seven_day_percent, seven_day_remaining
         );
+        let secondary = String::new();
 
         let mut metadata = HashMap::new();
         metadata.insert("dynamic_icon".to_string(), dynamic_icon);

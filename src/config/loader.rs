@@ -31,20 +31,9 @@ impl ConfigLoader {
         // Create themes directory
         fs::create_dir_all(&themes_dir)?;
 
-        let builtin_themes = [
-            "cometix",
-            "default",
-            "minimal",
-            "gruvbox",
-            "nord",
-            "powerline-dark",
-            "powerline-light",
-            "powerline-rose-pine",
-            "powerline-tokyo-night",
-        ];
         let mut created_any = false;
 
-        for theme_name in &builtin_themes {
+        for theme_name in Self::builtin_theme_names() {
             let theme_path = themes_dir.join(format!("{}.toml", theme_name));
 
             if !theme_path.exists() {
@@ -57,7 +46,7 @@ impl ConfigLoader {
         }
 
         if !created_any {
-            // println!("All built-in theme files already exist");
+            // all built-in theme files already exist
         }
 
         Ok(())
@@ -72,20 +61,37 @@ impl ConfigLoader {
         }
     }
 
-    /// Ensure themes directory exists and has built-in themes (silent mode)
+    /// Ensure themes directory exists and has built-in themes (silent mode).
+    /// Runs filesystem checks only once per process — subsequent calls are no-ops
+    /// so hot paths (e.g. UsageSegment re-loading config for API fallback) don't
+    /// re-stat 9 theme files on every statusline tick.
     pub fn ensure_themes_exist() {
-        // Silently ensure themes exist without printing output
-        let _ = Self::init_themes_silent();
+        use std::sync::Once;
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            let _ = Self::init_themes_silent();
+        });
     }
 
-    /// Initialize themes directory and create built-in theme files (silent mode)
-    fn init_themes_silent() -> Result<(), Box<dyn std::error::Error>> {
+    /// Overwrite every built-in theme file with the current in-binary defaults.
+    /// Called by `ccline --reset-themes` — useful after upgrade when palette
+    /// changes ship but existing toml files on disk block them.
+    pub fn reset_builtin_themes() -> Result<Vec<std::path::PathBuf>, Box<dyn std::error::Error>> {
         let themes_dir = Self::get_themes_path();
-
-        // Create themes directory
         fs::create_dir_all(&themes_dir)?;
+        let mut written = Vec::new();
+        for theme_name in Self::builtin_theme_names() {
+            let theme_path = themes_dir.join(format!("{}.toml", theme_name));
+            let theme_config = crate::ui::themes::ThemePresets::get_theme(theme_name);
+            let content = toml::to_string_pretty(&theme_config)?;
+            fs::write(&theme_path, content)?;
+            written.push(theme_path);
+        }
+        Ok(written)
+    }
 
-        let builtin_themes = [
+    fn builtin_theme_names() -> &'static [&'static str] {
+        &[
             "default",
             "minimal",
             "gruvbox",
@@ -95,9 +101,17 @@ impl ConfigLoader {
             "powerline-light",
             "powerline-rose-pine",
             "powerline-tokyo-night",
-        ];
+        ]
+    }
 
-        for theme_name in &builtin_themes {
+    /// Initialize themes directory and create built-in theme files (silent mode)
+    fn init_themes_silent() -> Result<(), Box<dyn std::error::Error>> {
+        let themes_dir = Self::get_themes_path();
+
+        // Create themes directory
+        fs::create_dir_all(&themes_dir)?;
+
+        for theme_name in Self::builtin_theme_names() {
             let theme_path = themes_dir.join(format!("{}.toml", theme_name));
 
             if !theme_path.exists() {
@@ -112,9 +126,20 @@ impl ConfigLoader {
 }
 
 impl Config {
-    /// Load configuration from default location
+    /// Stable-sort segments so inter-group order is fixed (per GROUP_ORDER)
+    /// while intra-group order is preserved from the current Vec.
+    pub fn normalize_segment_order(&mut self) {
+        self.segments
+            .sort_by_key(|s| crate::core::SegmentGroup::of(&s.id).sort_key());
+    }
+
+    /// Load configuration from default location.
+    ///
+    /// Does NOT call `normalize_segment_order` — the user's on-disk segment
+    /// order is authoritative; the TUI renders a group-aware view without
+    /// mutating the underlying Vec, and runtime rendering doesn't care about
+    /// group adjacency (separator logic uses `SegmentGroup::of(id)` directly).
     pub fn load() -> Result<Config, Box<dyn std::error::Error>> {
-        // Ensure themes directory exists and has built-in themes
         ConfigLoader::ensure_themes_exist();
 
         let config_path = Self::get_config_path();

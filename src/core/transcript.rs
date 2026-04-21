@@ -1,9 +1,10 @@
 use crate::config::TranscriptEntry;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TranscriptStats {
     pub input_tokens: u64,
     pub output_tokens: u64,

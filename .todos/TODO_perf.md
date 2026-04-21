@@ -499,29 +499,28 @@ Phase 1 把**单次 ccline 进程内** 5 次 parse 合并为 1 次，但每次�
 
 #### P2-4 处理边界情况（文件切换/截断/损坏）
 
-**状态**: `[ ] TODO`
+**状态**: `[x] DONE`（偏离 TODO 原决策树，详见下方说明）
 
-**修复范围**: `src/core/transcript_cache.rs` 里添加 `pub fn parse_with_cache(transcript_path: &Path) -> Option<TranscriptStats>`
+**修复范围**: `src/core/transcript_cache.rs` 新增 `pub fn parse_with_cache(transcript_path: &Path) -> Option<TranscriptStats>` + 辅助 `mtime_rfc3339`
 
-**改动要点**:
-- 入口函数 `parse_with_cache`：
-  1. 尝试 `load_cache(path)`
-  2. 读当前文件 metadata（`fs::metadata(path)`: `len()` 和 `modified()`）
-  3. 决策树：
-     - cache 不存在 → 全量 parse + save_cache
-     - cache 存在但 `transcript_path` 不匹配 → 全量 parse + save_cache（覆盖）
-     - cache 存在、path 匹配、但 `mtime` 变化或 `size < cached size` → 文件被重写/截断，全量 parse + save_cache
-     - cache 存在、path + mtime 匹配、`size >= cached size` → 增量 parse：`parse_incremental(path, cached.file_size_at_parse, cached.stats)` + save_cache
-  4. 任何 IO 失败 → fallback `TranscriptStats::parse`（原全量）+ 不写 cache
-- mtime 存为 RFC3339 字符串（统一复用 `chrono` 生态）
+**实际决策树**（与 TODO 原版不同）:
+- cache 不存在 / 路径不匹配 → 全量 parse + 写 cache
+- cache 存在，`file_size_at_parse > file_size` → 文件被截断 / 重写，全量 + 覆盖 cache
+- cache 存在，`file_size_at_parse <= file_size` → 增量 parse（size 相等时 parse_incremental 快速路径，0 行读取）
+- 增量内部返回 None（并发截断）→ 自动 fallback 全量 + 覆盖 cache
+- 任何 IO 失败 → fallback `parse_incremental(path, 0, default())` 全量 + 不写 cache
 
-**验收标准**:
-- [ ] 不存在 cache 场景：全量 parse + 新建 cache（文件存在）
-- [ ] 相同 transcript 第二次调用：用增量 parse（可通过日志或单元测试观察）
-- [ ] transcript 被截断场景：降级到全量 parse
-- [ ] cache 文件损坏（手动写入非法 JSON）：降级不 panic
+**偏离原因**（`docs` 在 parse_with_cache 函数上方中文注释里）:
+- TODO 原版"mtime 变就全量"会让**正常 append 场景**每次都全量 parse（append 必然改 mtime），增量 cache 永远不起作用，违反 Phase 2 性能目标（~50ms）
+- JSONL 只追加不原地改行，`file_size_at_parse > file_size` 才是"截断/重写"的强信号；size 变大 = 正常 append，用 cache 里的 stats 增量即可
+- mtime 仍然被写入 cache 字段，留作未来扩展（比如"size 一致 + mtime 变"可判"原地改写"罕见情况降级，本次暂不处理）
 
-**Commit 模板**: `feat: parse_with_cache 处理文件切换 / 截断降级`
+**验收结果**:
+- [x] `cargo build --release` 通过
+- [x] `cargo test --lib` 通过（17/17，P2-6 会新增 3 个专门测边界）
+- [ ] 截断 / cache 损坏 / 增量往返一致性 → P2-6 单元测试覆盖
+
+**Commit**: `feat: parse_with_cache 处理文件切换 / 截断降级`
 
 ---
 

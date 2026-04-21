@@ -526,23 +526,22 @@ Phase 1 把**单次 ccline 进程内** 5 次 parse 合并为 1 次，但每次�
 
 #### P2-5 集成到 InputData.transcript_stats()
 
-**状态**: `[ ] TODO`
+**状态**: `[x] DONE`
 
-**修复范围**: `src/config/types.rs:174-178`
+**修复范围**: `src/config/types.rs` 改 `transcript_stats` 方法 + 新 import `std::path::Path`
 
-**改动要点**:
-- 修改 `transcript_stats` 方法体：
-  - 把 `TranscriptStats::parse(&self.transcript_path)` 改为 `crate::core::transcript_cache::parse_with_cache(Path::new(&self.transcript_path))`
-  - import `use std::path::Path;`
-- OnceCell 语义不变（单次进程内仍然只执行一次）
+**改动**:
+- `transcript_stats` 方法体的 `TranscriptStats::parse(&self.transcript_path)` → `transcript_cache::parse_with_cache(Path::new(&self.transcript_path))`
+- OnceCell 语义不变——单次 ccline 进程内 5 个 segment 共享一次 parse；新增的磁盘 cache 是**跨进程**加速层
+- 方法上方新增中文 doc 注释解释"进程内 OnceCell + 跨进程 disk cache" 双层设计
 
-**验收标准**:
-- [ ] 5 个 segment 依然正常工作（不改它们的代码）
-- [ ] `cargo build --release` 通过
-- [ ] `cargo test` 通过
-- [ ] 观察 `~/.claude/ccline/` 目录会出现 `.transcript_cache_<hash>.json` 文件
+**验收结果**:
+- [x] 5 个 segment 代码未改动（cache_hit / turns / tools / tool_success / stop_reason）
+- [x] `cargo build --release` 通过
+- [x] `cargo test --lib` 通过（17/17）
+- [ ] `~/.claude/ccline/.transcript_cache_<hash>.json` 文件出现 → P2-7 部署后验证
 
-**Commit 模板**: `refactor: InputData.transcript_stats 走增量 cache`
+**Commit**: `refactor: InputData.transcript_stats 走增量 cache`
 
 ---
 

@@ -2,6 +2,7 @@ use crate::core::transcript::TranscriptStats;
 use serde::{Deserialize, Serialize};
 use std::cell::OnceCell;
 use std::collections::HashMap;
+use std::path::Path;
 
 // Main config structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,9 +172,14 @@ pub struct InputData {
 
 impl InputData {
     /// Lazy-parse the transcript once per tick and return a shared reference.
+    ///
+    /// 内部走 `transcript_cache::parse_with_cache` 增量路径——同一 ccline 进程内 OnceCell 保证
+    /// 只调一次，跨进程调用则靠磁盘 cache 避免对长 transcript 做 O(N) 全量重解析。
     pub fn transcript_stats(&self) -> Option<&TranscriptStats> {
         self.transcript_stats_cache
-            .get_or_init(|| TranscriptStats::parse(&self.transcript_path))
+            .get_or_init(|| {
+                crate::core::transcript_cache::parse_with_cache(Path::new(&self.transcript_path))
+            })
             .as_ref()
     }
 }

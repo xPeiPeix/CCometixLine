@@ -355,18 +355,18 @@ Push 后自动回步骤 2 等新一轮 review。**循环上限 5 轮**，超出 
 
 #### P1-7 新增单元测试验证 single-parse 不变量
 
-**状态**: `[ ] TODO`
+**状态**: `[x] DONE`
 
-**修复范围**: 在 `src/config/types.rs` 末尾新增 `#[cfg(test)] mod tests { ... }`
+**修复范围**: `src/config/types.rs` 末尾新增 `#[cfg(test)] mod tests`
 
-**改动要点**:
-- 测试用例 1：创建临时 transcript 文件（写入 3 行合法 JSONL），调用 `input.transcript_stats()` 两次，验证返回同一个 `&TranscriptStats` 引用（地址相同 → `std::ptr::eq`）
-- 测试用例 2：`transcript_path` 指向不存在的文件，`transcript_stats()` 返回 `None`，两次调用都返回 `None` 且不 panic
-- 用 `tempfile` crate？**不引入新依赖**——改用 `std::env::temp_dir()` + 手写 cleanup
+**改动**:
+- 测试用例 1 `transcript_stats_returns_same_reference_across_calls`：写 3 行合法 JSONL 到临时文件，两次调用 `input.transcript_stats()`，用 `std::ptr::eq` 验证返回同一引用，附带 sanity check `turn_count==2 / input==10 / output==5`
+- 测试用例 2 `transcript_stats_returns_none_when_file_missing`：指向不存在的 temp 路径，两次调用都返回 `None`
+- 使用 `std::env::temp_dir()` + 进程 pid + 纳秒时间戳生成唯一文件名，不引入 `tempfile` crate
 
-**验收标准**:
-- [ ] 两个测试用例都在 `cargo test` 下通过
-- [ ] 不引入新 crate 依赖（`Cargo.toml` 不变）
+**验收结果**:
+- [x] 2 个测试用例在 `cargo test --lib` 下通过（共 17/17 绿）
+- [x] 不引入新 crate 依赖（`Cargo.toml` 未改动）
 
 **Commit 模板**: `test: 新增 transcript_stats 共享 parse 单元测试`
 

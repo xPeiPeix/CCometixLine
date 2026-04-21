@@ -31,6 +31,10 @@ impl TranscriptStats {
     /// 返回 `(累积 stats, 新的 file_size_offset)`，调用方把 offset 回写到 cache 即可下次继续。
     /// 文件不存在 / IO 失败 / `from_offset > file_size`（说明文件被截断）返回 None，调用方
     /// 负责降级到全量 parse。
+    ///
+    /// **半行 tolerant**：若 ccline 启动时 Claude Code 恰好只把半行字节刷入磁盘（文件末尾
+    /// 没有 `\n`），此函数**不会把该半行的字节计入返回的 offset**——下次 parse 将从上一条
+    /// 完整行的末尾继续，残半行被 append 补全后会被完整解析，不会遗漏 usage。
     pub fn parse_incremental<P: AsRef<Path>>(
         transcript_path: P,
         from_offset: u64,
@@ -58,20 +62,32 @@ impl TranscriptStats {
             file.seek(SeekFrom::Start(from_offset)).ok()?;
         }
 
-        let reader = BufReader::new(file);
+        let mut reader = BufReader::new(file);
         let mut stats = init;
-        for line_result in reader.lines() {
-            let line = match line_result {
-                Ok(l) => l,
-                Err(_) => continue,
-            };
-            if line.trim().is_empty() {
-                continue;
+        // consumed_offset 只累加"读到的完整行"的字节数（含末尾 `\n`）；读到残半行时停下
+        // 不累加，下次从同一 offset 重新读 → 残半行被补全后能被完整解析。
+        let mut consumed_offset = from_offset;
+        let mut buf = String::new();
+        loop {
+            buf.clear();
+            match reader.read_line(&mut buf) {
+                Ok(0) => break, // EOF
+                Ok(n) => {
+                    if !buf.ends_with('\n') {
+                        // 残半行：本次刷盘未完整，丢弃 buf 不累加 offset
+                        break;
+                    }
+                    consumed_offset += n as u64;
+                    let trimmed = buf.trim_end_matches(|c| c == '\n' || c == '\r');
+                    if !trimmed.is_empty() {
+                        apply_line_to_stats(trimmed, &mut stats);
+                    }
+                }
+                Err(_) => break,
             }
-            apply_line_to_stats(&line, &mut stats);
         }
 
-        Some((stats, file_size))
+        Some((stats, consumed_offset))
     }
 
     pub fn cache_hit_rate(&self) -> Option<f64> {

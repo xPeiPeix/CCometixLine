@@ -30,6 +30,14 @@ pub struct TranscriptCache {
 /// 返回某 transcript 对应的 cache 文件路径：`~/.claude/ccline/.transcript_cache_<hash>.json`。
 ///
 /// 使用 `DefaultHasher` 对 `transcript_path` 做 hash（非安全敏感场景，仅用于生成唯一文件名）。
+///
+/// **⚠️ 稳定性警告**：`std::collections::hash_map::DefaultHasher` 的算法是 std 实现细节，
+/// 官方明确声明"可能随 Rust 版本变化"。升级 rustc 后同一 transcript path 会 hash 到不同
+/// 文件名，旧 cache 变成孤儿文件残留在 `~/.claude/ccline/` 目录。
+///
+/// 后果较轻：升级 rustc 后第一次 ccline 启动退化为一次全量 parse（~几百毫秒），旧 cache
+/// 每份几百字节的磁盘占用。若主人发现 `~/.claude/ccline/.transcript_cache_*.json` 堆积过多，
+/// 可手动 `rm ~/.claude/ccline/.transcript_cache_*.json` 清理，下次 ccline 启动会自动重建。
 pub fn cache_path(transcript_path: &Path) -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     let mut hasher = DefaultHasher::new();
@@ -54,7 +62,8 @@ pub fn load_cache(transcript_path: &Path) -> Option<TranscriptCache> {
 
 /// 原子写 cache：先写 `.tmp` 再 `fs::rename` 覆盖旧文件，避免 ccline 正好读到写到一半的文件。
 ///
-/// 父目录 `~/.claude/ccline/` 不存在时会被自动创建。
+/// 父目录 `~/.claude/ccline/` 不存在时会被自动创建。`fs::rename` 在 Windows 下偶尔会因
+/// target 被杀软扫描占用而失败——此时显式删除 `.tmp` 避免残渣堆积。
 pub fn save_cache(cache: &TranscriptCache) -> io::Result<()> {
     let src_path = PathBuf::from(&cache.transcript_path);
     let target = cache_path(&src_path).ok_or_else(|| {
@@ -72,7 +81,11 @@ pub fn save_cache(cache: &TranscriptCache) -> io::Result<()> {
     let json = serde_json::to_string(cache)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     fs::write(&tmp, json)?;
-    fs::rename(&tmp, &target)?;
+    if let Err(e) = fs::rename(&tmp, &target) {
+        // rename 失败 → 清理 .tmp 避免残渣堆积，然后把原错误向上传递
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
+    }
     Ok(())
 }
 
@@ -92,7 +105,10 @@ fn mtime_rfc3339(t: SystemTime) -> String {
 /// Phase 2 的性能目标（~50ms）实现不了。`file_size_at_parse > file_size` 才是"截断/重写"的强信号
 /// ——JSONL 只会追加不会原地改行，正常使用 size 单调递增。
 ///
-/// 任何 IO 失败都会 fallback 到全量 `parse_incremental`，并且不写 cache，保证 statusline 永远能返回。
+/// **降级链**：增量失败 → 全量 parse 再试；全量也失败且有旧 cache → 返回旧 cache.stats
+/// （显示略旧数据比所有 segment 变 `-` 体验更好）；所有路径都失败 → None。
+///
+/// `file_size == 0`（空 transcript）时跳过 save_cache——避免"每次启动都多一次无效磁盘写"的负优化。
 pub fn parse_with_cache(transcript_path: &Path) -> Option<TranscriptStats> {
     let metadata = fs::metadata(transcript_path).ok()?;
     let file_size = metadata.len();
@@ -110,33 +126,39 @@ pub fn parse_with_cache(transcript_path: &Path) -> Option<TranscriptStats> {
     });
 
     let (stats, new_offset) = if let Some(cache) = reusable_cache {
-        // 增量：基于 cache 的 stats 继续累加；若 parse_incremental 返回 None（如并发截断）降级全量
-        TranscriptStats::parse_incremental(
+        match TranscriptStats::parse_incremental(
             transcript_path,
             cache.file_size_at_parse,
             cache.stats.clone(),
-        )
-        .or_else(|| {
-            TranscriptStats::parse_incremental(
-                transcript_path,
-                0,
-                TranscriptStats::default(),
-            )
-        })?
+        ) {
+            Some(v) => v,
+            None => {
+                // 增量失败（并发截断等）→ 全量重试；全量也失败 → 保留旧 cache.stats 显示，
+                // 避免 5 个 transcript-based segment 同时变 "-" 的糟糕体验
+                TranscriptStats::parse_incremental(
+                    transcript_path,
+                    0,
+                    TranscriptStats::default(),
+                )
+                .unwrap_or_else(|| (cache.stats.clone(), cache.file_size_at_parse))
+            }
+        }
     } else {
         // cache 缺失 / 不匹配 / 被截断：全量重 parse
         TranscriptStats::parse_incremental(transcript_path, 0, TranscriptStats::default())?
     };
 
-    // 写回 cache；写失败不影响本次结果
-    let fresh = TranscriptCache {
-        transcript_path: transcript_path.to_string_lossy().into_owned(),
-        file_size_at_parse: new_offset,
-        file_mtime,
-        stats: stats.clone(),
-        cached_at: Utc::now().to_rfc3339(),
-    };
-    let _ = save_cache(&fresh);
+    // 写回 cache；写失败不影响本次结果。空文件跳过写入避免无效 IO
+    if file_size > 0 {
+        let fresh = TranscriptCache {
+            transcript_path: transcript_path.to_string_lossy().into_owned(),
+            file_size_at_parse: new_offset,
+            file_mtime,
+            stats: stats.clone(),
+            cached_at: Utc::now().to_rfc3339(),
+        };
+        let _ = save_cache(&fresh);
+    }
 
     Some(stats)
 }
@@ -267,9 +289,66 @@ mod tests {
     }
 
     #[test]
+    fn parse_incremental_does_not_count_half_line_bytes() {
+        // 关键回归测试：半行 JSONL 末尾缺 \n 时，offset 不应被推进，下次补全后能完整读到
+        let path = unique_tmp_path("ccline_cache_halfline");
+
+        // 先写 2 行完整内容
+        write_lines(&path, &[USER_LINE, ASSISTANT_LINE_A]);
+
+        // 手动 append 半行（不带 \n）模拟 Claude Code 正在刷盘的中间态
+        {
+            let mut f = fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .expect("append half line");
+            write!(f, r#"{{"type":"user","message":"#).expect("write partial");
+        }
+
+        let (stats_partial, offset_partial) =
+            TranscriptStats::parse_incremental(&path, 0, TranscriptStats::default())
+                .expect("parse ok");
+        assert_eq!(stats_partial.turn_count, 1, "仅 1 完整 user line 被计入");
+        assert_eq!(stats_partial.input_tokens, 10);
+
+        // offset 不应包含半行的字节——文件大小大于 offset
+        let file_size = fs::metadata(&path).unwrap().len();
+        assert!(
+            offset_partial < file_size,
+            "offset ({}) 必须小于 file_size ({})，否则半行会被跳过",
+            offset_partial, file_size
+        );
+
+        // 补全那一行为完整 user line
+        {
+            let mut f = fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .expect("complete half line");
+            writeln!(f, r#"{{"content":[]}}}}"#).expect("write rest");
+        }
+
+        // 拼起来的完整行 = `{"type":"user","message":{"content":[]}}` → 合法 user line
+        let (stats_after, _) =
+            TranscriptStats::parse_incremental(&path, offset_partial, stats_partial.clone())
+                .expect("parse after completion");
+        assert_eq!(
+            stats_after.turn_count, 2,
+            "补全后的 user line 必须被计入（turn 1→2）"
+        );
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
     fn load_cache_returns_none_for_corrupt_json() {
         // 手写一个非法 JSON 到 cache_path；load_cache 必须返回 None 不 panic
         // 为避免污染真实 home dir，用假的 transcript_path + save_cache 写入，然后 corrupt 覆盖
+        if dirs::home_dir().is_none() {
+            eprintln!("skip load_cache_returns_none_for_corrupt_json: no home dir");
+            return;
+        }
+
         let transcript_path = unique_tmp_path("ccline_cache_corrupt");
         write_lines(&transcript_path, &[USER_LINE, ASSISTANT_LINE_A]);
 
@@ -297,5 +376,46 @@ mod tests {
         // 清理 cache 文件和 transcript
         let _ = fs::remove_file(&cpath);
         let _ = fs::remove_file(&transcript_path);
+    }
+
+    #[test]
+    fn parse_with_cache_uses_incremental_after_append() {
+        // 集成测试：parse_with_cache 整条决策树——首次建 cache，append 后第二次走增量路径
+        if dirs::home_dir().is_none() {
+            eprintln!("skip parse_with_cache_uses_incremental_after_append: no home dir");
+            return;
+        }
+
+        let path = unique_tmp_path("ccline_pwc_append");
+        write_lines(&path, &[USER_LINE, ASSISTANT_LINE_A, USER_LINE]);
+
+        // 首次：建立 cache
+        let first = parse_with_cache(&path).expect("first call ok");
+        assert_eq!(first.turn_count, 2);
+        assert_eq!(first.input_tokens, 10);
+        assert_eq!(first.output_tokens, 5);
+
+        // cache 文件应该存在
+        let cpath = cache_path(&path).expect("cache_path ok");
+        assert!(cpath.exists(), "首次调用后 cache 文件必须存在");
+
+        // append 2 行
+        append_lines(&path, &[ASSISTANT_LINE_B, USER_LINE]);
+
+        // 第二次：走增量路径，stats 累加
+        let second = parse_with_cache(&path).expect("second call ok");
+
+        // 跟从 0 全量 parse 的结果对比
+        let full = TranscriptStats::parse(&path).expect("full ok");
+        assert_eq!(second.turn_count, full.turn_count);
+        assert_eq!(second.input_tokens, full.input_tokens);
+        assert_eq!(second.output_tokens, full.output_tokens);
+        assert_eq!(full.turn_count, 3);
+        assert_eq!(full.input_tokens, 13);
+        assert_eq!(full.output_tokens, 7);
+
+        // 清理
+        let _ = fs::remove_file(&cpath);
+        let _ = fs::remove_file(&path);
     }
 }

@@ -1,9 +1,54 @@
 use crate::config::{
     AnsiColor, ColorConfig, IconConfig, SegmentConfig, SegmentId, TextStyleConfig,
 };
+use crate::core::SegmentGroup;
 use std::collections::HashMap;
 
+fn group_colors(
+    group: SegmentGroup,
+) -> (AnsiColor, AnsiColor, Option<AnsiColor>) {
+    match group {
+        SegmentGroup::Identity => (
+            AnsiColor::Rgb { r: 232, g: 233, b: 241 },
+            AnsiColor::Rgb { r: 232, g: 233, b: 241 },
+            Some(AnsiColor::Rgb { r: 49, g: 116, b: 143 }),
+        ),
+        SegmentGroup::Place => (
+            AnsiColor::Rgb { r: 25, g: 23, b: 36 },
+            AnsiColor::Rgb { r: 25, g: 23, b: 36 },
+            Some(AnsiColor::Rgb { r: 156, g: 207, b: 216 }),
+        ),
+        SegmentGroup::Tokens => (
+            AnsiColor::Rgb { r: 25, g: 23, b: 36 },
+            AnsiColor::Rgb { r: 25, g: 23, b: 36 },
+            Some(AnsiColor::Rgb { r: 196, g: 167, b: 231 }),
+        ),
+        SegmentGroup::Quota => (
+            AnsiColor::Rgb { r: 25, g: 23, b: 36 },
+            AnsiColor::Rgb { r: 25, g: 23, b: 36 },
+            Some(AnsiColor::Rgb { r: 246, g: 193, b: 119 }),
+        ),
+        SegmentGroup::Time => (
+            AnsiColor::Rgb { r: 232, g: 233, b: 241 },
+            AnsiColor::Rgb { r: 232, g: 233, b: 241 },
+            Some(AnsiColor::Rgb { r: 144, g: 140, b: 170 }),
+        ),
+        SegmentGroup::Activity => (
+            AnsiColor::Rgb { r: 25, g: 23, b: 36 },
+            AnsiColor::Rgb { r: 25, g: 23, b: 36 },
+            Some(AnsiColor::Rgb { r: 235, g: 111, b: 146 }),
+        ),
+        SegmentGroup::Other => (
+            AnsiColor::Color16 { c16: 7 },
+            AnsiColor::Color16 { c16: 7 },
+            None,
+        ),
+    }
+}
+
+
 pub fn model_segment() -> SegmentConfig {
+    let (icon, text, bg) = group_colors(SegmentGroup::Identity);
     SegmentConfig {
         id: SegmentId::Model,
         enabled: true,
@@ -12,21 +57,9 @@ pub fn model_segment() -> SegmentConfig {
             nerd_font: "\u{e26d}".to_string(),
         },
         colors: ColorConfig {
-            icon: Some(AnsiColor::Rgb {
-                r: 235,
-                g: 188,
-                b: 186,
-            }),
-            text: Some(AnsiColor::Rgb {
-                r: 235,
-                g: 188,
-                b: 186,
-            }),
-            background: Some(AnsiColor::Rgb {
-                r: 25,
-                g: 23,
-                b: 36,
-            }),
+            icon: Some(icon),
+            text: Some(text),
+            background: bg,
         },
         styles: TextStyleConfig::default(),
         options: HashMap::new(),
@@ -34,6 +67,7 @@ pub fn model_segment() -> SegmentConfig {
 }
 
 pub fn directory_segment() -> SegmentConfig {
+    let (icon, text, bg) = group_colors(SegmentGroup::Place);
     SegmentConfig {
         id: SegmentId::Directory,
         enabled: true,
@@ -42,21 +76,9 @@ pub fn directory_segment() -> SegmentConfig {
             nerd_font: "\u{f024b}".to_string(),
         },
         colors: ColorConfig {
-            icon: Some(AnsiColor::Rgb {
-                r: 196,
-                g: 167,
-                b: 231,
-            }),
-            text: Some(AnsiColor::Rgb {
-                r: 196,
-                g: 167,
-                b: 231,
-            }),
-            background: Some(AnsiColor::Rgb {
-                r: 38,
-                g: 35,
-                b: 58,
-            }),
+            icon: Some(icon),
+            text: Some(text),
+            background: bg,
         },
         styles: TextStyleConfig::default(),
         options: HashMap::new(),
@@ -64,6 +86,7 @@ pub fn directory_segment() -> SegmentConfig {
 }
 
 pub fn git_segment() -> SegmentConfig {
+    let (icon, text, bg) = group_colors(SegmentGroup::Place);
     SegmentConfig {
         id: SegmentId::Git,
         enabled: true,
@@ -72,21 +95,9 @@ pub fn git_segment() -> SegmentConfig {
             nerd_font: "\u{f02a2}".to_string(),
         },
         colors: ColorConfig {
-            icon: Some(AnsiColor::Rgb {
-                r: 156,
-                g: 207,
-                b: 216,
-            }),
-            text: Some(AnsiColor::Rgb {
-                r: 156,
-                g: 207,
-                b: 216,
-            }),
-            background: Some(AnsiColor::Rgb {
-                r: 31,
-                g: 29,
-                b: 46,
-            }),
+            icon: Some(icon),
+            text: Some(text),
+            background: bg,
         },
         styles: TextStyleConfig::default(),
         options: {
@@ -98,6 +109,7 @@ pub fn git_segment() -> SegmentConfig {
 }
 
 pub fn context_window_segment() -> SegmentConfig {
+    let (icon, text, bg) = group_colors(SegmentGroup::Tokens);
     SegmentConfig {
         id: SegmentId::ContextWindow,
         enabled: true,
@@ -106,21 +118,9 @@ pub fn context_window_segment() -> SegmentConfig {
             nerd_font: "\u{f49b}".to_string(),
         },
         colors: ColorConfig {
-            icon: Some(AnsiColor::Rgb {
-                r: 224,
-                g: 222,
-                b: 244,
-            }),
-            text: Some(AnsiColor::Rgb {
-                r: 224,
-                g: 222,
-                b: 244,
-            }),
-            background: Some(AnsiColor::Rgb {
-                r: 82,
-                g: 79,
-                b: 103,
-            }),
+            icon: Some(icon),
+            text: Some(text),
+            background: bg,
         },
         styles: TextStyleConfig::default(),
         options: HashMap::new(),
@@ -128,6 +128,7 @@ pub fn context_window_segment() -> SegmentConfig {
 }
 
 pub fn cost_segment() -> SegmentConfig {
+    let (icon, text, bg) = group_colors(SegmentGroup::Quota);
     SegmentConfig {
         id: SegmentId::Cost,
         enabled: false,
@@ -136,21 +137,9 @@ pub fn cost_segment() -> SegmentConfig {
             nerd_font: "\u{eec1}".to_string(),
         },
         colors: ColorConfig {
-            icon: Some(AnsiColor::Rgb {
-                r: 246,
-                g: 193,
-                b: 119,
-            }),
-            text: Some(AnsiColor::Rgb {
-                r: 246,
-                g: 193,
-                b: 119,
-            }),
-            background: Some(AnsiColor::Rgb {
-                r: 35,
-                g: 33,
-                b: 54,
-            }), // Rose Pine dark background
+            icon: Some(icon),
+            text: Some(text),
+            background: bg,
         },
         styles: TextStyleConfig::default(),
         options: HashMap::new(),
@@ -158,6 +147,7 @@ pub fn cost_segment() -> SegmentConfig {
 }
 
 pub fn session_segment() -> SegmentConfig {
+    let (icon, text, bg) = group_colors(SegmentGroup::Time);
     SegmentConfig {
         id: SegmentId::Session,
         enabled: false,
@@ -166,21 +156,9 @@ pub fn session_segment() -> SegmentConfig {
             nerd_font: "\u{f19bb}".to_string(),
         },
         colors: ColorConfig {
-            icon: Some(AnsiColor::Rgb {
-                r: 156,
-                g: 207,
-                b: 216,
-            }),
-            text: Some(AnsiColor::Rgb {
-                r: 156,
-                g: 207,
-                b: 216,
-            }),
-            background: Some(AnsiColor::Rgb {
-                r: 42,
-                g: 39,
-                b: 63,
-            }), // Rose Pine darker background
+            icon: Some(icon),
+            text: Some(text),
+            background: bg,
         },
         styles: TextStyleConfig::default(),
         options: HashMap::new(),
@@ -188,6 +166,7 @@ pub fn session_segment() -> SegmentConfig {
 }
 
 pub fn output_style_segment() -> SegmentConfig {
+    let (icon, text, bg) = group_colors(SegmentGroup::Identity);
     SegmentConfig {
         id: SegmentId::OutputStyle,
         enabled: false,
@@ -196,21 +175,9 @@ pub fn output_style_segment() -> SegmentConfig {
             nerd_font: "\u{f12f5}".to_string(),
         },
         colors: ColorConfig {
-            icon: Some(AnsiColor::Rgb {
-                r: 49,
-                g: 116,
-                b: 143,
-            }),
-            text: Some(AnsiColor::Rgb {
-                r: 49,
-                g: 116,
-                b: 143,
-            }),
-            background: Some(AnsiColor::Rgb {
-                r: 38,
-                g: 35,
-                b: 58,
-            }), // Rose Pine darkest background
+            icon: Some(icon),
+            text: Some(text),
+            background: bg,
         },
         styles: TextStyleConfig::default(),
         options: HashMap::new(),
@@ -218,6 +185,7 @@ pub fn output_style_segment() -> SegmentConfig {
 }
 
 pub fn usage_segment() -> SegmentConfig {
+    let (icon, text, bg) = group_colors(SegmentGroup::Quota);
     SegmentConfig {
         id: SegmentId::Usage,
         enabled: false,
@@ -226,21 +194,9 @@ pub fn usage_segment() -> SegmentConfig {
             nerd_font: "\u{f0a9e}".to_string(),
         },
         colors: ColorConfig {
-            icon: Some(AnsiColor::Rgb {
-                r: 246,
-                g: 193,
-                b: 119,
-            }),
-            text: Some(AnsiColor::Rgb {
-                r: 246,
-                g: 193,
-                b: 119,
-            }),
-            background: Some(AnsiColor::Rgb {
-                r: 35,
-                g: 33,
-                b: 54,
-            }),
+            icon: Some(icon),
+            text: Some(text),
+            background: bg,
         },
         styles: TextStyleConfig::default(),
         options: {
@@ -256,5 +212,138 @@ pub fn usage_segment() -> SegmentConfig {
             opts.insert("timeout".to_string(), serde_json::Value::Number(2.into()));
             opts
         },
+    }
+}
+
+pub fn api_duration_segment() -> SegmentConfig {
+    let (icon, text, bg) = group_colors(SegmentGroup::Time);
+    SegmentConfig {
+        id: SegmentId::ApiDuration,
+        enabled: false,
+        icon: IconConfig {
+            plain: "🤖".to_string(),
+            nerd_font: "\u{f06a9}".to_string(),
+        },
+        colors: ColorConfig {
+            icon: Some(icon),
+            text: Some(text),
+            background: bg,
+        },
+        styles: TextStyleConfig::default(),
+        options: HashMap::new(),
+    }
+}
+
+pub fn lines_segment() -> SegmentConfig {
+    let (icon, text, bg) = group_colors(SegmentGroup::Time);
+    SegmentConfig {
+        id: SegmentId::Lines,
+        enabled: false,
+        icon: IconConfig {
+            plain: "±".to_string(),
+            nerd_font: "\u{f0992}".to_string(),
+        },
+        colors: ColorConfig {
+            icon: Some(icon),
+            text: Some(text),
+            background: bg,
+        },
+        styles: TextStyleConfig::default(),
+        options: HashMap::new(),
+    }
+}
+
+pub fn cache_hit_segment() -> SegmentConfig {
+    let (icon, text, bg) = group_colors(SegmentGroup::Tokens);
+    SegmentConfig {
+        id: SegmentId::CacheHit,
+        enabled: false,
+        icon: IconConfig {
+            plain: "💾".to_string(),
+            nerd_font: "\u{f0aa9}".to_string(),
+        },
+        colors: ColorConfig {
+            icon: Some(icon),
+            text: Some(text),
+            background: bg,
+        },
+        styles: TextStyleConfig::default(),
+        options: HashMap::new(),
+    }
+}
+
+pub fn turns_segment() -> SegmentConfig {
+    let (icon, text, bg) = group_colors(SegmentGroup::Activity);
+    SegmentConfig {
+        id: SegmentId::Turns,
+        enabled: false,
+        icon: IconConfig {
+            plain: "💬".to_string(),
+            nerd_font: "\u{f0369}".to_string(),
+        },
+        colors: ColorConfig {
+            icon: Some(icon),
+            text: Some(text),
+            background: bg,
+        },
+        styles: TextStyleConfig::default(),
+        options: HashMap::new(),
+    }
+}
+
+pub fn tools_segment() -> SegmentConfig {
+    let (icon, text, bg) = group_colors(SegmentGroup::Activity);
+    SegmentConfig {
+        id: SegmentId::Tools,
+        enabled: false,
+        icon: IconConfig {
+            plain: "🔧".to_string(),
+            nerd_font: "\u{f1064}".to_string(),
+        },
+        colors: ColorConfig {
+            icon: Some(icon),
+            text: Some(text),
+            background: bg,
+        },
+        styles: TextStyleConfig::default(),
+        options: HashMap::new(),
+    }
+}
+
+pub fn stop_reason_segment() -> SegmentConfig {
+    let (icon, text, bg) = group_colors(SegmentGroup::Activity);
+    SegmentConfig {
+        id: SegmentId::StopReason,
+        enabled: false,
+        icon: IconConfig {
+            plain: "?".to_string(),
+            nerd_font: "\u{f02d6}".to_string(),
+        },
+        colors: ColorConfig {
+            icon: Some(icon),
+            text: Some(text),
+            background: bg,
+        },
+        styles: TextStyleConfig::default(),
+        options: HashMap::new(),
+    }
+}
+
+pub fn tool_success_segment() -> SegmentConfig {
+    let (icon, text, bg) = group_colors(SegmentGroup::Activity);
+    SegmentConfig {
+        id: SegmentId::ToolSuccess,
+        enabled: false,
+        icon: IconConfig {
+            plain: "✓".to_string(),
+            nerd_font: "\u{f05e0}".to_string(),
+        },
+        colors: ColorConfig {
+            icon: Some(icon),
+            text: Some(text),
+            background: bg,
+        },
+        styles: TextStyleConfig::default(),
+        options: HashMap::new(),
     }
 }

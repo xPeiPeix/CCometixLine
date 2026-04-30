@@ -84,7 +84,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let generator = StatusLineGenerator::new(config);
     let statusline = generator.generate(segments_data);
 
-    println!("{}", statusline);
+    // Append CSI EL (Erase in Line) so shorter statuslines don't leave trailing
+    // glyphs from a previous, longer render. Standard practice for prompt-line
+    // tools (starship/oh-my-posh) that may be redrawn in-place by the host TUI.
+    println!("{}\x1b[K", statusline);
 
     Ok(())
 }
